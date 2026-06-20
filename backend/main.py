@@ -2,6 +2,8 @@ import os
 import io
 import json
 import re
+import math
+import struct
 import base64
 import tempfile
 import subprocess
@@ -167,6 +169,34 @@ def sec_to_tc_short(sec: float) -> str:
     m = int(sec // 60)
     s = sec % 60
     return f"{m}:{s:05.2f}"
+
+
+def extract_audio_waveform_ffmpeg(video_path: str, n_samples: int = 300) -> list[float]:
+    """Return RMS amplitude waveform from audio track using FFmpeg."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "8000",
+             "-f", "f32le", "pipe:1"],
+            capture_output=True, timeout=90,
+        )
+        if not result.stdout:
+            return []
+        raw = result.stdout
+        n_floats = len(raw) // 4
+        if n_floats < 4:
+            return []
+        pcm = struct.unpack(f"{n_floats}f", raw[: n_floats * 4])
+        step = max(1, n_floats // n_samples)
+        waveform: list[float] = []
+        for i in range(0, n_floats, step):
+            chunk = pcm[i : i + step]
+            rms = math.sqrt(sum(x * x for x in chunk) / len(chunk))
+            waveform.append(round(min(1.0, rms * 6), 4))
+            if len(waveform) >= n_samples:
+                break
+        return waveform
+    except Exception:
+        return []
 
 
 def ffmpeg_available() -> bool:
@@ -605,6 +635,7 @@ async def extract_video_frames(
         frames_data, meta = extract_frames_cv2(tmp_path, max_frames)
         scenes = detect_scenes_cv2(tmp_path)
         energy = detect_motion_energy(tmp_path)
+        audio_waveform = extract_audio_waveform_ffmpeg(tmp_path) if ffmpeg_available() else []
     finally:
         os.unlink(tmp_path)
 
@@ -628,6 +659,7 @@ async def extract_video_frames(
         "filename": filename,
         "scenes": scenes,
         "energy": energy,
+        "audio_waveform": audio_waveform,
         **meta,
     }
 

@@ -13,12 +13,14 @@ const S = {
   // Video studio
   videoFile: null,
   videoBlobUrl: null,
-  frames: [],       // [{file_id, timestamp_sec, frame_index}]
-  meta: null,       // {duration_sec, fps, width, height, filename, ...}
-  scenes: [],       // [{timestamp_sec, timestamp, correlation}]
-  energy: [],       // [{t, e}]
-  editData: null,   // parsed AI edit JSON
+  frames: [],         // [{file_id, timestamp_sec, frame_index, thumbnail_b64}]
+  meta: null,         // {duration_sec, fps, width, height, filename, ...}
+  scenes: [],         // [{timestamp_sec, timestamp, correlation}]
+  energy: [],         // [{t, e}]
+  audioWaveform: [],  // [0..1] RMS amplitudes for timeline
+  editData: null,     // parsed AI edit JSON
   analyzing: false,
+  batchExporting: false,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -432,6 +434,7 @@ async function processVideo(file) {
     S.meta = {duration_sec:data.duration_sec, fps:data.fps, total_frames:data.total_frames, width:data.width, height:data.height, filename:data.filename};
     S.scenes = data.scenes || [];
     S.energy = data.energy || [];
+    S.audioWaveform = data.audio_waveform || [];
 
     setProgress(100, 'Ready!', `${data.frames.length} frames · ${S.scenes.length} scenes detected`);
     setStep('step-ready');
@@ -483,6 +486,7 @@ function buildStudio() {
 
   buildFilmstrip();
   drawTimeline();
+  renderStoryboard();
 }
 
 function buildFilmstrip() {
@@ -530,16 +534,33 @@ function drawTimeline() {
   ctx.fillStyle = '#111113';
   ctx.fillRect(0, 0, w, h);
 
-  // Energy waveform
-  if (S.energy.length) {
+  // Audio waveform (teal, mirrored — fills upper half)
+  if (S.audioWaveform.length) {
+    const aw = S.audioWaveform;
+    const mid = h * 0.45;
+    ctx.fillStyle = 'rgba(20,184,166,0.35)';
+    aw.forEach((amp, i) => {
+      const x = (i / aw.length) * w;
+      const bw = Math.max(1, w / aw.length - 0.5);
+      const barH = amp * mid;
+      ctx.fillRect(x, mid - barH, bw, barH * 2);
+    });
+    // Center line
     ctx.beginPath();
-    ctx.fillStyle = 'rgba(124,58,237,0.4)';
-    S.energy.forEach((e, i) => {
+    ctx.strokeStyle = 'rgba(20,184,166,0.5)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(0, mid); ctx.lineTo(w, mid);
+    ctx.stroke();
+  }
+
+  // Motion energy waveform (purple, bottom bar)
+  if (S.energy.length) {
+    ctx.fillStyle = 'rgba(124,58,237,0.35)';
+    S.energy.forEach((e) => {
       const x = (e.t / dur) * w;
-      const barH = e.e * h * 2.5;
+      const barH = e.e * h * 0.4;
       ctx.fillRect(x, h - barH, Math.max(2, w / S.energy.length - 1), barH);
     });
-    ctx.fill();
   }
 
   // Scene change markers
@@ -592,10 +613,12 @@ function drawTimeline() {
 window.addEventListener('resize', () => { if (S.meta) drawTimeline(); });
 
 // ── Results tabs ────────────────────────────────────────────────────────────
+const ALL_TABS = ['overview','storyboard','cuts','scenes','color','captions','ffmpeg','shorts','export'];
+
 el.resultsTabs.forEach(tab => tab.addEventListener('click', () => {
   el.resultsTabs.forEach(t => t.classList.remove('active'));
   tab.classList.add('active');
-  ['overview','cuts','scenes','color','captions','ffmpeg','shorts','export'].forEach(name => {
+  ALL_TABS.forEach(name => {
     $(`tab-${name}`).classList.toggle('hidden', tab.dataset.tab !== name);
   });
 }));
@@ -699,13 +722,24 @@ function renderEditResults(d) {
 
   // Cuts tab
   if (d.edit_decisions?.length) {
-    el.tabCuts.innerHTML = `<div class="cut-list">${d.edit_decisions.map(cut => `
-      <div class="cut-item" onclick="seekTo(${tcToSec(cut.in_point)})">
-        <span class="cut-action ${cut.action||'KEEP'}">${cut.action||'KEEP'}</span>
-        <span class="cut-tc">${cut.in_point||'?'} → ${cut.out_point||'?'}</span>
-        ${cut.speed && cut.speed !== 1 ? `<span style="color:var(--purple);font-size:11px">×${cut.speed}</span>` : ''}
-        <span class="cut-reason">${cut.reason||''}</span>
-      </div>`).join('')}</div>`;
+    const keeps = d.edit_decisions.filter(c => c.action !== 'CUT').length;
+    const cuts = d.edit_decisions.filter(c => c.action === 'CUT').length;
+    el.tabCuts.innerHTML = `
+      <div style="display:flex;gap:12px;margin-bottom:10px;font-size:12px;color:var(--text2)">
+        <span>Total: <strong>${d.edit_decisions.length}</strong></span>
+        <span style="color:var(--green)">Keep: <strong>${keeps}</strong></span>
+        <span style="color:var(--red)">Cut: <strong>${cuts}</strong></span>
+      </div>
+      <div class="cut-list">${d.edit_decisions.map((cut,i) => `
+        <div class="cut-item">
+          <span class="cut-action ${cut.action||'KEEP'}">${cut.action||'KEEP'}</span>
+          <span class="cut-tc">${cut.in_point||'?'} → ${cut.out_point||'?'}</span>
+          ${cut.speed && cut.speed !== 1 ? `<span style="color:var(--purple);font-size:11px">×${cut.speed}</span>` : ''}
+          <span class="cut-reason">${cut.reason||''}</span>
+          <div class="cut-preview-btns">
+            <button class="cut-prev-btn" onclick="previewCut(${tcToSec(cut.in_point||'0')},${tcToSec(cut.out_point||'5')})" title="Preview this segment">▶ Preview</button>
+          </div>
+        </div>`).join('')}</div>`;
   }
 
   // Scenes tab
@@ -874,7 +908,14 @@ function renderEditResults(d) {
       </div>
     </div>
 
-    <div class="export-section-label" style="margin-top:18px">📦 Export Data & Scripts</div>
+    <div style="margin-top:14px;margin-bottom:18px">
+      <button class="batch-export-btn" id="batch-export-btn" onclick="batchExport()">
+        ⚡ Batch Export All 3 Versions
+      </button>
+      <span style="font-size:11.5px;color:var(--text3);margin-left:10px">Full Edit + Shorts 9:16 + Color Grade — all at once</span>
+    </div>
+
+    <div class="export-section-label" style="margin-top:4px">📦 Export Data & Scripts</div>
     <div class="export-grid">
       <div class="exp-card">
         <div class="exp-icon">💬</div>
@@ -903,10 +944,13 @@ function renderEditResults(d) {
     </div>
   `;
 
+  // Refresh storyboard with AI decision overlays
+  renderStoryboard();
+
   // Auto-switch to overview tab
   el.resultsTabs.forEach(t => t.classList.remove('active'));
   document.querySelector('.rtab[data-tab="overview"]').classList.add('active');
-  ['cuts','scenes','color','captions','ffmpeg','shorts','export'].forEach(n => $(`tab-${n}`).classList.add('hidden'));
+  ALL_TABS.filter(n=>n!=='overview').forEach(n => $(`tab-${n}`)?.classList.add('hidden'));
   el.tabOverview.classList.remove('hidden');
 }
 
@@ -995,15 +1039,149 @@ function esc(t) { return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 
 el.vResetBtn.addEventListener('click', () => {
   S.frames.forEach(f => fetch(`${API}/api/files/${f.file_id}`,{method:'DELETE'}).catch(()=>{}));
-  S.frames=[]; S.meta=null; S.scenes=[]; S.energy=[]; S.editData=null;
+  S.frames=[]; S.meta=null; S.scenes=[]; S.energy=[]; S.audioWaveform=[]; S.editData=null;
   if(S.videoBlobUrl){URL.revokeObjectURL(S.videoBlobUrl);S.videoBlobUrl=null;}
+  S.videoFile=null;
   el.vStudio.classList.add('hidden');
   el.vUpload.classList.remove('hidden');
   el.filmstrip.innerHTML='';
   el.aiPlaceholder.classList.remove('hidden');
   el.overviewContent.classList.add('hidden');
   el.overviewContent.innerHTML='';
+  const sb = $('tab-storyboard');
+  if(sb) sb.innerHTML='';
 });
+
+// ── Cut preview ─────────────────────────────────────────────────────────────
+
+let previewTimer = null;
+function previewCut(inSec, outSec) {
+  if (!el.vPlayer) return;
+  clearTimeout(previewTimer);
+  const dur = outSec - inSec;
+
+  // Show a brief 1s preview around in_point, then jump to out_point context
+  el.vPlayer.currentTime = Math.max(0, inSec - 0.3);
+  el.vPlayer.play();
+
+  // After showing the in_point, jump to out_point context
+  previewTimer = setTimeout(() => {
+    el.vPlayer.currentTime = Math.max(0, outSec - 0.3);
+    // Auto-pause after 1.2s at out_point
+    previewTimer = setTimeout(() => el.vPlayer.pause(), 1200);
+  }, Math.min(1500, dur * 500 + 400));
+}
+
+// ── Storyboard ──────────────────────────────────────────────────────────────
+
+function findNearestScene(timeSec) {
+  if (!S.editData?.scenes?.length) return null;
+  let best = null, bestDist = Infinity;
+  for (const sc of S.editData.scenes) {
+    const inS = tcToSec(sc.in_point);
+    const outS = tcToSec(sc.out_point);
+    if (timeSec >= inS - 0.5 && timeSec <= outS + 0.5) {
+      const d = Math.abs(timeSec - inS);
+      if (d < bestDist) { bestDist = d; best = sc; }
+    }
+  }
+  return best;
+}
+
+function findNearestDecision(timeSec) {
+  if (!S.editData?.edit_decisions?.length) return null;
+  let best = null, bestDist = Infinity;
+  for (const d of S.editData.edit_decisions) {
+    const inS = tcToSec(d.in_point);
+    const outS = tcToSec(d.out_point);
+    if (timeSec >= inS - 0.5 && timeSec <= outS + 0.5) {
+      const dist = Math.abs(timeSec - inS);
+      if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+  }
+  return best;
+}
+
+function renderStoryboard() {
+  const tab = $('tab-storyboard');
+  if (!tab) return;
+
+  if (!S.frames.length) {
+    tab.innerHTML = `<div class="ap-sub" style="text-align:center;padding:40px;color:var(--text3)">Upload a video to see the storyboard</div>`;
+    return;
+  }
+
+  const sceneSet = new Set(S.scenes.map(s => Math.round(s.timestamp_sec)));
+  const hasAI = !!(S.editData);
+
+  const panels = S.frames.map((frame, i) => {
+    const sc = findNearestScene(frame.timestamp_sec);
+    const dec = findNearestDecision(frame.timestamp_sec);
+    const isSceneChange = sceneSet.has(Math.round(frame.timestamp_sec));
+    const action = dec?.action || null;
+
+    const badge = action
+      ? `<span class="cut-action ${action}" style="font-size:9px;padding:1px 5px">${action}</span>`
+      : '';
+    const scoreEl = sc?.quality_score
+      ? `<span style="color:var(--green);font-size:10px">★${sc.quality_score}</span>`
+      : '';
+
+    return `
+      <div class="sb-panel${isSceneChange ? ' sb-scene-start' : ''}${action==='CUT' ? ' sb-panel-cut' : ''}" onclick="seekTo(${frame.timestamp_sec})">
+        ${frame.thumbnail_b64
+          ? `<img class="sb-thumb" src="${frame.thumbnail_b64}" alt="F${i+1}" loading="lazy"/>`
+          : `<div class="sb-thumb sb-thumb-placeholder">F${i+1}</div>`}
+        <div class="sb-info">
+          <div class="sb-top">
+            <span class="sb-tc">${fmt(frame.timestamp_sec)}</span>
+            <div style="display:flex;gap:4px;align-items:center">${scoreEl}${badge}</div>
+          </div>
+          ${sc ? `<div class="sb-scene-title">${esc(sc.title || `Scene ${sc.id}`)}</div>` : `<div class="sb-scene-title" style="color:var(--text3)">Frame ${i+1}</div>`}
+          ${sc?.mood ? `<div class="sb-reason">${sc.mood}</div>` : (dec?.reason ? `<div class="sb-reason">${esc((dec.reason||'').slice(0,55))}</div>` : '')}
+        </div>
+      </div>`;
+  }).join('');
+
+  const keptCount = S.editData?.edit_decisions?.filter(d => d.action !== 'CUT').length;
+  const cutCount = S.editData?.edit_decisions?.filter(d => d.action === 'CUT').length;
+
+  tab.innerHTML = `
+    <div class="sb-header">
+      <span>
+        <strong>${S.frames.length}</strong> frames &nbsp;·&nbsp;
+        <strong>${S.scenes.length}</strong> scene changes
+        ${hasAI ? `&nbsp;·&nbsp; <span style="color:var(--green)">${keptCount} kept</span> &nbsp;·&nbsp; <span style="color:var(--red)">${cutCount} cut</span>` : ''}
+      </span>
+      <span style="font-size:11px;color:var(--text3)">Click any panel to jump in player${!hasAI ? ' · Run AI Edit for cut decisions' : ''}</span>
+    </div>
+    <div class="storyboard-grid">${panels}</div>
+  `;
+}
+
+// ── Batch export ─────────────────────────────────────────────────────────────
+
+async function batchExport() {
+  if (!S.videoFile) { toast('No video loaded', 'error'); return; }
+  if (!S.editData) { toast('Run AI Edit first to generate batch export data', 'error'); return; }
+  if (S.batchExporting) return;
+
+  S.batchExporting = true;
+  const btn = $('batch-export-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = `<div class="tool-spinner" style="width:12px;height:12px;border-color:rgba(255,255,255,.2);border-top-color:white;display:inline-block;vertical-align:middle;margin-right:6px"></div>Exporting 3 versions…`; }
+
+  toast('Starting batch export (Full Edit + Shorts + Color Grade)…', 'info');
+
+  const ops = ['full_edit','shorts','color_grade'];
+  const results = await Promise.allSettled(ops.map(op => processVideoOp(op)));
+
+  const failed = results.filter(r => r.status === 'rejected').length;
+  S.batchExporting = false;
+  if (btn) { btn.disabled = false; btn.innerHTML = '⚡ Batch Export All (3 versions)'; }
+
+  if (failed === 0) toast('Batch export complete — all 3 versions downloaded!', 'success');
+  else toast(`Batch export done (${3-failed}/3 succeeded)`, failed < 3 ? 'info' : 'error');
+}
 
 // ── Server-side video processing ────────────────────────────────────────────
 
@@ -1088,6 +1266,9 @@ window.downloadFFmpegScript = downloadFFmpegScript;
 window.downloadJSON = downloadJSON;
 window.copyFFmpeg = copyFFmpeg;
 window.processVideoOp = processVideoOp;
+window.batchExport = batchExport;
+window.previewCut = previewCut;
+window.renderStoryboard = renderStoryboard;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();

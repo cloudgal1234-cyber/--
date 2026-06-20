@@ -211,10 +211,11 @@
           <div id="timeline-cursor" class="timeline-cursor"></div>
         </div>
         <div class="timeline-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#14b8a6"></span>Audio</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#7c3aed"></span>Motion</span>
           <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Scene change</span>
           <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Cut point</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Keep</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#a78bfa"></span>Caption</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ef4444;opacity:.3;width:14px;border-radius:2px"></span>CUT region</span>
         </div>
 
         <!-- Filmstrip -->
@@ -227,6 +228,7 @@
         <div class="results-section">
           <div class="results-tabs">
             <button class="rtab active" data-tab="overview">Overview</button>
+            <button class="rtab" data-tab="storyboard">🖼 Storyboard</button>
             <button class="rtab" data-tab="cuts">✂️ Cuts</button>
             <button class="rtab" data-tab="scenes">🎬 Scenes</button>
             <button class="rtab" data-tab="color">🎨 Color</button>
@@ -251,6 +253,7 @@
               </div>
               <div id="tab-overview-content" class="hidden"></div>
             </div>
+            <div id="tab-storyboard" class="tab-panel hidden"></div>
             <div id="tab-cuts" class="tab-panel hidden"></div>
             <div id="tab-scenes" class="tab-panel hidden"></div>
             <div id="tab-color" class="tab-panel hidden"></div>

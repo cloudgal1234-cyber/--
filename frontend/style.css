@@ -348,6 +348,54 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
 /* Frame thumbnail image */
 .ft-img{width:100%;height:100%;object-fit:cover;display:block}
 
+/* ── Storyboard ── */
+.sb-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-size:12.5px;color:var(--text2)}
+
+.storyboard-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+}
+.sb-panel{
+  background:var(--bg3);
+  border:2px solid var(--border);
+  border-radius:var(--r2);
+  overflow:hidden;
+  cursor:pointer;
+  transition:all .15s;
+}
+.sb-panel:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.sb-panel.sb-scene-start{border-color:rgba(239,68,68,.5)}
+.sb-panel.sb-panel-cut{opacity:.55}
+.sb-panel.sb-panel-cut:hover{opacity:1}
+.sb-thumb{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg4)}
+.sb-thumb-placeholder{width:100%;aspect-ratio:16/9;background:var(--bg4);display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;font-family:'JetBrains Mono',monospace}
+.sb-info{padding:6px 8px 7px}
+.sb-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.sb-tc{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3)}
+.sb-scene-title{font-size:11.5px;color:var(--text2);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-reason{font-size:10px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+@media(max-width:1100px){.storyboard-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:750px){.storyboard-grid{grid-template-columns:repeat(2,1fr)}}
+
+/* ── Cut preview button ── */
+.cut-preview-btns{margin-left:auto;flex-shrink:0}
+.cut-prev-btn{background:none;border:1px solid var(--border2);border-radius:3px;color:var(--text3);padding:2px 8px;font-size:10.5px;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+.cut-prev-btn:hover{border-color:var(--accent);color:var(--text);background:var(--accentGlow)}
+
+/* ── Batch export button ── */
+.batch-export-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 20px;
+  background:linear-gradient(135deg,#dc2626,#7c3aed);
+  border:none;border-radius:var(--r2);
+  color:white;font-family:inherit;font-size:13px;font-weight:600;
+  cursor:pointer;transition:all .15s;
+}
+.batch-export-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(220,38,38,.45)}
+.batch-export-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
 /* Export section labels */
 .export-section-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px}
 
