@@ -12,162 +12,291 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-  <div id="app">
-    <!-- Sidebar -->
-    <aside id="sidebar">
-      <div class="sidebar-header">
-        <div class="logo">
-          <div class="logo-icon">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-              <circle cx="14" cy="14" r="13" fill="url(#grad1)" />
-              <path d="M8 14 C8 10, 14 6, 20 10 C20 18, 14 22, 8 18 Z" fill="white" opacity="0.9" />
-              <defs>
-                <linearGradient id="grad1" x1="0" y1="0" x2="28" y2="28">
-                  <stop offset="0%" stop-color="#7c3aed" />
-                  <stop offset="100%" stop-color="#2563eb" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-          <span class="logo-text">OmniAI</span>
-        </div>
-        <button id="new-chat-btn" class="new-chat-btn" title="New conversation">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 5v14M5 12h14" />
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <circle cx="14" cy="14" r="13" fill="url(#grad1)"/>
+            <path d="M8 14 C8 10,14 6,20 10 C20 18,14 22,8 18 Z" fill="white" opacity="0.9"/>
+            <defs><linearGradient id="grad1" x1="0" y1="0" x2="28" y2="28">
+              <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#2563eb"/>
+            </linearGradient></defs>
           </svg>
+        </div>
+        <span class="logo-text">OmniAI</span>
+      </div>
+      <button id="new-chat-btn" class="icon-btn-sm" title="New conversation">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+
+    <!-- Mode switcher -->
+    <div class="mode-switcher">
+      <button class="mode-btn active" data-mode="chat">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat
+      </button>
+      <button class="mode-btn" data-mode="video">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+        Video Studio
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-label">Model</div>
+      <select id="model-select" class="model-select">
+        <option value="claude-opus-4-8">Claude Opus 4.8 ✦</option>
+        <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+        <option value="claude-fable-5">Claude Fable 5 ✦✦</option>
+      </select>
+    </div>
+
+    <!-- Chat-only options -->
+    <div class="sidebar-section" id="chat-options">
+      <div class="section-label">Capabilities</div>
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Web Search
+        </span>
+        <input type="checkbox" id="toggle-search" checked /><span class="toggle-switch"></span>
+      </label>
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          Code Execution
+        </span>
+        <input type="checkbox" id="toggle-code" checked /><span class="toggle-switch"></span>
+      </label>
+      <label class="toggle-row">
+        <span class="toggle-label">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+          Deep Thinking
+        </span>
+        <input type="checkbox" id="toggle-thinking" checked /><span class="toggle-switch"></span>
+      </label>
+    </div>
+
+    <!-- Video-only options -->
+    <div class="sidebar-section hidden" id="video-options">
+      <div class="section-label">Analysis Mode</div>
+      <div class="video-task-list">
+        <button class="video-task-btn active" data-task="full">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Full Analysis
+        </button>
+        <button class="video-task-btn" data-task="edit">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Edit Suggestions
+        </button>
+        <button class="video-task-btn" data-task="chapters">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Chapter Markers
+        </button>
+        <button class="video-task-btn" data-task="captions">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>
+          Captions / SRT
+        </button>
+        <button class="video-task-btn" data-task="thumbnail">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Thumbnail Design
+        </button>
+        <button class="video-task-btn" data-task="script">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Script / Narration
+        </button>
+        <button class="video-task-btn" data-task="storyboard">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Storyboard
+        </button>
+        <button class="video-task-btn" data-task="shorts">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          Shorts / TikTok
+        </button>
+        <button class="video-task-btn" data-task="color">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 1 7 7"/></svg>
+          Color Grading
+        </button>
+        <button class="video-task-btn" data-task="social">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          Social Media Pack
         </button>
       </div>
 
-      <div class="sidebar-section">
-        <div class="section-label">Model</div>
-        <select id="model-select" class="model-select">
-          <option value="claude-opus-4-8">Claude Opus 4.8 ✦</option>
-          <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-          <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="claude-fable-5">Claude Fable 5 ✦✦</option>
-        </select>
+      <div class="section-label" style="margin-top:16px">Frame Count</div>
+      <div class="frame-count-row">
+        <input type="range" id="frame-count" min="5" max="30" value="20" />
+        <span id="frame-count-label">20 frames</span>
       </div>
+    </div>
 
-      <div class="sidebar-section">
-        <div class="section-label">Capabilities</div>
-        <label class="toggle-row">
-          <span class="toggle-label">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            Web Search
-          </span>
-          <input type="checkbox" id="toggle-search" checked />
-          <span class="toggle-switch"></span>
-        </label>
-        <label class="toggle-row">
-          <span class="toggle-label">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Code Execution
-          </span>
-          <input type="checkbox" id="toggle-code" checked />
-          <span class="toggle-switch"></span>
-        </label>
-        <label class="toggle-row">
-          <span class="toggle-label">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-            Deep Thinking
-          </span>
-          <input type="checkbox" id="toggle-thinking" checked />
-          <span class="toggle-switch"></span>
-        </label>
-      </div>
+    <div class="sidebar-section capabilities-info" id="chat-caps">
+      <div class="cap-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Images & Vision</div>
+      <div class="cap-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> PDFs & Docs</div>
+      <div class="cap-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> 1M Token Context</div>
+    </div>
+  </aside>
 
-      <div class="sidebar-section capabilities-info">
-        <div class="cap-badge">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-          Images & Vision
-        </div>
-        <div class="cap-badge">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          PDFs & Documents
-        </div>
-        <div class="cap-badge">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Long Context (1M)
-        </div>
-      </div>
-    </aside>
+  <!-- ── Main ── -->
+  <main id="main">
 
-    <!-- Main Chat Area -->
-    <main id="main">
-      <!-- Empty state -->
+    <!-- ══════════ CHAT VIEW ══════════ -->
+    <div id="chat-view">
       <div id="empty-state" class="empty-state">
         <div class="empty-logo">
           <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-            <circle cx="32" cy="32" r="30" fill="url(#grad2)" />
-            <path d="M18 32 C18 22, 32 14, 46 22 C46 42, 32 50, 18 42 Z" fill="white" opacity="0.9" />
-            <defs>
-              <linearGradient id="grad2" x1="0" y1="0" x2="64" y2="64">
-                <stop offset="0%" stop-color="#7c3aed" />
-                <stop offset="100%" stop-color="#2563eb" />
-              </linearGradient>
-            </defs>
+            <circle cx="32" cy="32" r="30" fill="url(#grad2)"/>
+            <path d="M18 32 C18 22,32 14,46 22 C46 42,32 50,18 42 Z" fill="white" opacity="0.9"/>
+            <defs><linearGradient id="grad2" x1="0" y1="0" x2="64" y2="64">
+              <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#2563eb"/>
+            </linearGradient></defs>
           </svg>
         </div>
         <h1>OmniAI</h1>
-        <p>Multimodal intelligence — text, images, code, documents, and the web</p>
+        <p>Multimodal intelligence — text, images, code, documents, video, and the web</p>
         <div class="suggestion-grid">
           <button class="suggestion-card" data-prompt="Explain quantum entanglement with a simple analogy">
-            <span class="suggestion-icon">⚛️</span>
-            <span>Explain quantum entanglement simply</span>
+            <span class="suggestion-icon">⚛️</span><span>Explain quantum entanglement simply</span>
           </button>
           <button class="suggestion-card" data-prompt="Write a Python script to analyze a CSV file and create visualizations">
-            <span class="suggestion-icon">🐍</span>
-            <span>Python data analysis script</span>
+            <span class="suggestion-icon">🐍</span><span>Python data analysis script</span>
           </button>
           <button class="suggestion-card" data-prompt="What are the latest developments in AI this week?">
-            <span class="suggestion-icon">🔍</span>
-            <span>Latest AI news (web search)</span>
+            <span class="suggestion-icon">🔍</span><span>Latest AI news (web search)</span>
           </button>
           <button class="suggestion-card" data-prompt="Write a short story about a robot discovering emotions">
-            <span class="suggestion-icon">✍️</span>
-            <span>Creative writing challenge</span>
+            <span class="suggestion-icon">✍️</span><span>Creative writing challenge</span>
           </button>
         </div>
       </div>
-
-      <!-- Messages -->
       <div id="messages" class="messages hidden"></div>
 
-      <!-- Input Area -->
       <div id="input-area" class="input-area">
-        <!-- File previews -->
         <div id="file-previews" class="file-previews hidden"></div>
+        <!-- Deep Research banner -->
+        <div id="deep-research-bar" class="deep-research-bar hidden">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          <span>Deep Research Mode — AI will search multiple sources and synthesize a comprehensive report</span>
+          <button id="disable-deep-research" class="dr-close">✕</button>
+        </div>
 
         <div class="input-box">
           <button id="attach-btn" class="icon-btn" title="Attach file">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </button>
-
-          <textarea
-            id="user-input"
-            placeholder="Ask OmniAI anything... (Shift+Enter for new line)"
-            rows="1"
-          ></textarea>
-
+          <textarea id="user-input" placeholder="Ask OmniAI anything… (Shift+Enter = new line)" rows="1"></textarea>
+          <button id="mic-btn" class="icon-btn mic-btn" title="Voice input">
+            <svg id="mic-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+          </button>
+          <button id="deep-research-btn" class="icon-btn" title="Deep Research mode" style="color:var(--accent-blue)">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
           <button id="send-btn" class="send-btn" disabled>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
-
         <input type="file" id="file-input" accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css" multiple hidden />
+        <div class="input-footer">OmniAI can make mistakes. Powered by Claude. · 🎤 Voice · 🔍 Deep Research · 📎 Files</div>
+      </div>
+    </div>
 
-        <div class="input-footer">
-          <span>OmniAI can make mistakes. Powered by Claude.</span>
+    <!-- ══════════ VIDEO STUDIO VIEW ══════════ -->
+    <div id="video-view" class="hidden">
+
+      <!-- Upload zone -->
+      <div id="video-upload-zone" class="video-upload-zone">
+        <div class="video-drop-inner" id="video-drop-inner">
+          <div class="video-icon-wrap">
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="url(#vg)" stroke-width="1.5">
+              <defs><linearGradient id="vg" x1="0" y1="0" x2="24" y2="24">
+                <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#2563eb"/>
+              </linearGradient></defs>
+              <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+            </svg>
+          </div>
+          <h2>Drop your video here</h2>
+          <p>MP4, MOV, AVI, MKV, WEBM — up to 500MB</p>
+          <button class="upload-video-btn" id="upload-video-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose Video
+          </button>
+          <input type="file" id="video-file-input" accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v" hidden />
         </div>
       </div>
-    </main>
-  </div>
 
-  <script src="app.js"></script>
+      <!-- Extraction progress -->
+      <div id="video-progress" class="video-progress hidden">
+        <div class="progress-inner">
+          <div class="progress-spinner"></div>
+          <div>
+            <div class="progress-title" id="progress-title">Extracting frames…</div>
+            <div class="progress-sub" id="progress-sub">Analyzing video structure</div>
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Video studio workspace -->
+      <div id="video-workspace" class="video-workspace hidden">
+
+        <!-- Top bar -->
+        <div class="workspace-topbar">
+          <div class="video-meta" id="video-meta"></div>
+          <div class="workspace-actions">
+            <button class="ws-btn" id="analyze-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Analyze
+            </button>
+            <button class="ws-btn ws-btn-ghost" id="reset-video-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+              New Video
+            </button>
+          </div>
+        </div>
+
+        <!-- Frame filmstrip -->
+        <div class="filmstrip-wrap">
+          <div class="filmstrip-label">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="10" rx="1"/><path d="M7 7V4M17 7V4M7 20v-3M17 20v-3"/></svg>
+            Video Frames
+          </div>
+          <div class="filmstrip" id="filmstrip"></div>
+        </div>
+
+        <!-- Analysis output -->
+        <div class="analysis-area" id="analysis-area">
+          <div class="analysis-placeholder" id="analysis-placeholder">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <p>Select an analysis mode in the sidebar, then click <strong>Analyze</strong></p>
+          </div>
+          <div id="analysis-content" class="analysis-content hidden"></div>
+        </div>
+
+        <!-- Chapter timeline (shown only for chapters task) -->
+        <div id="chapter-timeline" class="chapter-timeline hidden"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Frame lightbox -->
+<div id="lightbox" class="lightbox hidden">
+  <div class="lightbox-backdrop" id="lightbox-backdrop"></div>
+  <div class="lightbox-content">
+    <button class="lightbox-close" id="lightbox-close">✕</button>
+    <img id="lightbox-img" src="" alt="" />
+    <div class="lightbox-info" id="lightbox-info"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>
