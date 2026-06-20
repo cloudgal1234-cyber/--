@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniAI — Multimodal Intelligence</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <circle cx="14" cy="14" r="13" fill="url(#grad1)" />
+              <path d="M8 14 C8 10, 14 6, 20 10 C20 18, 14 22, 8 18 Z" fill="white" opacity="0.9" />
+              <defs>
+                <linearGradient id="grad1" x1="0" y1="0" x2="28" y2="28">
+                  <stop offset="0%" stop-color="#7c3aed" />
+                  <stop offset="100%" stop-color="#2563eb" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <span class="logo-text">OmniAI</span>
+        </div>
+        <button id="new-chat-btn" class="new-chat-btn" title="New conversation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">Model</div>
+        <select id="model-select" class="model-select">
+          <option value="claude-opus-4-8">Claude Opus 4.8 ✦</option>
+          <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+          <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="claude-fable-5">Claude Fable 5 ✦✦</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">Capabilities</div>
+        <label class="toggle-row">
+          <span class="toggle-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            Web Search
+          </span>
+          <input type="checkbox" id="toggle-search" checked />
+          <span class="toggle-switch"></span>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Code Execution
+          </span>
+          <input type="checkbox" id="toggle-code" checked />
+          <span class="toggle-switch"></span>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            Deep Thinking
+          </span>
+          <input type="checkbox" id="toggle-thinking" checked />
+          <span class="toggle-switch"></span>
+        </label>
+      </div>
+
+      <div class="sidebar-section capabilities-info">
+        <div class="cap-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          Images & Vision
+        </div>
+        <div class="cap-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          PDFs & Documents
+        </div>
+        <div class="cap-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Long Context (1M)
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main id="main">
+      <!-- Empty state -->
+      <div id="empty-state" class="empty-state">
+        <div class="empty-logo">
+          <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="30" fill="url(#grad2)" />
+            <path d="M18 32 C18 22, 32 14, 46 22 C46 42, 32 50, 18 42 Z" fill="white" opacity="0.9" />
+            <defs>
+              <linearGradient id="grad2" x1="0" y1="0" x2="64" y2="64">
+                <stop offset="0%" stop-color="#7c3aed" />
+                <stop offset="100%" stop-color="#2563eb" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1>OmniAI</h1>
+        <p>Multimodal intelligence — text, images, code, documents, and the web</p>
+        <div class="suggestion-grid">
+          <button class="suggestion-card" data-prompt="Explain quantum entanglement with a simple analogy">
+            <span class="suggestion-icon">⚛️</span>
+            <span>Explain quantum entanglement simply</span>
+          </button>
+          <button class="suggestion-card" data-prompt="Write a Python script to analyze a CSV file and create visualizations">
+            <span class="suggestion-icon">🐍</span>
+            <span>Python data analysis script</span>
+          </button>
+          <button class="suggestion-card" data-prompt="What are the latest developments in AI this week?">
+            <span class="suggestion-icon">🔍</span>
+            <span>Latest AI news (web search)</span>
+          </button>
+          <button class="suggestion-card" data-prompt="Write a short story about a robot discovering emotions">
+            <span class="suggestion-icon">✍️</span>
+            <span>Creative writing challenge</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div id="messages" class="messages hidden"></div>
+
+      <!-- Input Area -->
+      <div id="input-area" class="input-area">
+        <!-- File previews -->
+        <div id="file-previews" class="file-previews hidden"></div>
+
+        <div class="input-box">
+          <button id="attach-btn" class="icon-btn" title="Attach file">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+
+          <textarea
+            id="user-input"
+            placeholder="Ask OmniAI anything... (Shift+Enter for new line)"
+            rows="1"
+          ></textarea>
+
+          <button id="send-btn" class="send-btn" disabled>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
+        </div>
+
+        <input type="file" id="file-input" accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css" multiple hidden />
+
+        <div class="input-footer">
+          <span>OmniAI can make mistakes. Powered by Claude.</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
