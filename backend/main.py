@@ -1,8 +1,10 @@
 import os
+import io
 import json
+import re
 import base64
 import tempfile
-import io
+import subprocess
 from typing import AsyncGenerator
 
 import anthropic
@@ -10,14 +12,14 @@ import cv2
 from PIL import Image
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="OmniAI - Multimodal AI Assistant")
+app = FastAPI(title="OmniAI — Multimodal AI Studio")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,156 +31,139 @@ app.add_middleware(
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-VIDEO_ANALYSIS_PROMPTS = {
-    "storyboard": (
-        "You are a professional film director and storyboard artist. Convert these video frames into a "
-        "detailed shot-by-shot storyboard document:\n\n"
-        "For each distinct shot/scene:\n"
-        "1. **Shot #N** — Shot type (ECU/CU/MS/LS/WS/POV/OTS/Dutch angle/aerial/etc.)\n"
-        "2. **Timecode** — Estimated timestamp\n"
-        "3. **Visual Description** — What is in frame, composition, lighting\n"
-        "4. **Camera Movement** — Static / Pan / Tilt / Dolly / Zoom / Handheld\n"
-        "5. **Subject Action** — What is happening in the shot\n"
-        "6. **Dialogue/VO** — Any spoken content\n"
-        "7. **Transition** — How it moves to next shot\n\n"
-        "Then provide:\n"
-        "- **Shot List Summary** (table with #, type, duration, description)\n"
-        "- **Coverage Gaps** — What cutaways or B-roll are missing\n"
-        "- **Production Notes** — Recommendations for reshoots or pickups\n\n"
-        "Format professionally like an actual film/TV storyboard document."
-    ),
-    "shorts": (
-        "You are a YouTube Shorts and TikTok viral content strategist with 10M+ views experience. "
-        "Analyze this video and create a complete short-form content package:\n\n"
-        "1. **Hook Analysis** — Does the first 3 seconds grab attention? Rate it 1-10, explain, suggest better hooks.\n"
-        "2. **Shorts Cut Plan** — Which 15-60 second segment would perform best? (Give exact timestamps)\n"
-        "3. **Vertical Reframe** — How to crop 16:9 → 9:16 without losing key content\n"
-        "4. **Caption Strategy** — First caption text (max 6 words), on-screen text overlays with timestamps\n"
-        "5. **Audio Hook** — What trending sound or music genre fits this content\n"
-        "6. **Hashtags** — 20 optimized hashtags for maximum reach\n"
-        "7. **Title Options** — 5 A/B-testable title variants\n"
-        "8. **Posting Strategy** — Best time to post, which platform first (YT Shorts / TikTok / Reels)\n"
-        "9. **Series Potential** — Can this become a recurring series? Suggest episode concepts.\n"
-        "10. **Viral Prediction** — Rate the virality potential 1-10 with specific reasoning.\n\n"
-        "Be specific, data-driven, and brutally honest."
-    ),
-    "color": (
-        "You are a senior colorist with credits on Netflix originals and feature films. "
-        "Provide a complete color grading guide for this video:\n\n"
-        "1. **Current Color Profile Analysis**\n"
-        "   - Color temperature (warm/cool/neutral)\n"
-        "   - Contrast levels (flat/normal/contrasty)\n"
-        "   - Saturation style\n"
-        "   - Shadows/Midtones/Highlights breakdown\n"
-        "   - Current mood conveyed by colors\n\n"
-        "2. **Target Look Recommendations** (pick best for content type)\n"
-        "   - Primary look name (e.g., 'Teal & Orange', 'Desaturated Film', 'Warm Cinematic', 'Clean Commercial')\n"
-        "   - Specific LUT suggestions (DaVinci, VSCO, FilmConvert equivalents)\n\n"
-        "3. **Scene-by-Scene Color Notes**\n"
-        "   Frame by frame: what to adjust per scene\n\n"
-        "4. **DaVinci Resolve Settings**\n"
-        "   - Lift/Gamma/Gain values\n"
-        "   - Hue curves adjustments\n"
-        "   - Node structure recommendation\n\n"
-        "5. **Premiere Pro / Final Cut Settings**\n"
-        "   Equivalent Lumetri panel settings\n\n"
-        "6. **Consistency Issues** — frames that break the color continuity\n\n"
-        "Be precise and technical."
-    ),
-    "social": (
-        "You are a social media strategist and content repurposing expert. Turn this video into a "
-        "full multi-platform content package:\n\n"
-        "**Platform-Specific Content Plan:**\n\n"
-        "📱 **TikTok / YouTube Shorts / Instagram Reels**\n"
-        "   - Best 30-second clip (timestamps)\n"
-        "   - Caption (150 chars max)\n"
-        "   - 10 hashtags\n\n"
-        "📸 **Instagram Feed (static)**\n"
-        "   - Best frame for photo post (timestamp)\n"
-        "   - Carousel concept (5 slides)\n"
-        "   - Caption text\n\n"
-        "🐦 **X (Twitter)**\n"
-        "   - 3 tweet variants to promote the video\n"
-        "   - Best quote from visual content\n\n"
-        "💼 **LinkedIn**\n"
-        "   - Professional angle/spin on the content\n"
-        "   - Long-form post hook\n\n"
-        "📧 **Email Newsletter**\n"
-        "   - Subject line (A/B test: 2 versions)\n"
-        "   - Preview text\n"
-        "   - Video embed description\n\n"
-        "📝 **Blog Post**\n"
-        "   - SEO title\n"
-        "   - 5 H2 headers for a related blog post\n"
-        "   - Meta description\n\n"
-        "**Content Calendar** — Suggest a 2-week posting schedule across all platforms."
-    ),
-    "full": (
-        "You are an expert video analyst and film editor. I'm sending you frames extracted from a video "
-        "(evenly sampled throughout the duration). Analyze this video comprehensively:\n\n"
-        "1. **Overview** — What is this video about? Genre, subject, purpose.\n"
-        "2. **Scene Breakdown** — Describe each distinct scene/segment with approximate timestamps.\n"
-        "3. **Visual Style** — Cinematography, color palette, mood, lighting, camera movement.\n"
-        "4. **Pacing & Rhythm** — Is the editing fast/slow? Does the pacing work for the content?\n"
-        "5. **Strengths** — What works well visually and narratively?\n"
-        "6. **Weaknesses** — What could be improved?\n\n"
-        "Be specific, professional, and actionable."
-    ),
-    "edit": (
-        "You are a professional video editor at a top post-production house. Analyze these frames "
-        "extracted from a video and provide detailed editing recommendations:\n\n"
-        "1. **Cut Points** — Where should cuts happen? Identify specific moments (by frame number) where "
-        "   the edit should be tightened or re-cut.\n"
-        "2. **Transitions** — What transition types suit each scene change? (hard cut, dissolve, wipe, match cut, J/L cut)\n"
-        "3. **Pacing Adjustments** — Which sections drag? Which need breathing room?\n"
-        "4. **Color Grade** — Recommend a color treatment (warm/cool, contrast, saturation, LUT style).\n"
-        "5. **B-Roll Suggestions** — What supplemental footage would strengthen the story?\n"
-        "6. **Music & Sound** — Recommend music genre/tempo and sound design elements.\n"
-        "7. **Final Cut Order** — If the sequence needs restructuring, suggest a new order.\n\n"
-        "Format your response with clear sections and specific, actionable advice."
-    ),
-    "chapters": (
-        "You are a video content strategist. Based on these evenly sampled frames from a video, "
-        "generate chapter markers with timestamps.\n\n"
-        "Format EXACTLY like this (I will parse it programmatically):\n\n"
-        "CHAPTERS:\n"
-        "00:00 - [Chapter title]\n"
-        "[next timestamp] - [Chapter title]\n"
-        "...\n\n"
-        "Then below the chapters section, write a 2-3 sentence description of each chapter.\n"
-        "Estimate timestamps based on the frame positions (the frames are evenly distributed).\n"
-        "Be descriptive and YouTube-ready for the chapter titles."
-    ),
-    "captions": (
-        "You are a professional subtitle writer. Based on these video frames, generate a realistic "
-        "caption/subtitle script. Since you can see the visual content but not hear the audio:\n\n"
-        "1. Infer what is likely being said based on visual context, setting, and any visible text.\n"
-        "2. Generate natural-sounding captions with [SPEAKER] labels where appropriate.\n"
-        "3. Include [MUSIC] or [SOUND EFFECT] notes for non-speech audio that should be captioned.\n"
-        "4. Format as an SRT-style script with timecodes.\n\n"
-        "Make the captions sound authentic and professional."
-    ),
-    "thumbnail": (
-        "You are a YouTube thumbnail strategist and graphic designer. Analyze these video frames and:\n\n"
-        "1. **Best Thumbnail Frame** — Which frame number would make the best thumbnail? Why?\n"
-        "2. **Thumbnail Composition** — Describe exact cropping and layout.\n"
-        "3. **Text Overlay** — Suggest a title text for the thumbnail (short, punchy, curiosity-driving).\n"
-        "4. **Design Elements** — Colors, arrows, circles, emojis — what graphic elements to add?\n"
-        "5. **A/B Test Variants** — Suggest 2 alternative thumbnail concepts.\n"
-        "6. **CTR Prediction** — Rate the thumbnail's click-through potential 1-10 and explain.\n\n"
-        "Be specific — describe exactly what to put where."
-    ),
-    "script": (
-        "You are a professional scriptwriter and video producer. Based on these video frames, "
-        "generate a complete production script:\n\n"
-        "1. **Narration Script** — Write the voiceover text that would accompany each scene.\n"
-        "2. **On-Screen Text** — Lower thirds, titles, and text overlays to add.\n"
-        "3. **Director's Notes** — Shot descriptions and visual direction.\n"
-        "4. **Call-to-Action** — A compelling CTA for the end of the video.\n\n"
-        "Format it as a proper two-column script (Visual | Audio) where appropriate."
-    ),
-}
 
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dict]:
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError("Cannot open video file")
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    duration_sec = total_frames / fps if fps > 0 else 0
+
+    step = max(1, total_frames // max_frames)
+    frame_indices = list(range(0, total_frames, step))[:max_frames]
+
+    frames_data = []
+    for idx in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        h, w = frame.shape[:2]
+        if w > 1280:
+            scale = 1280 / w
+            frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, format="JPEG", quality=82)
+        frames_data.append((buf.getvalue(), idx / fps))
+
+    cap.release()
+    return frames_data, {
+        "duration_sec": round(duration_sec, 3),
+        "fps": round(fps, 3),
+        "total_frames": total_frames,
+        "width": width,
+        "height": height,
+    }
+
+
+def detect_scenes_cv2(video_path: str, threshold: float = 0.35) -> list[dict]:
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Sample at most every 5 frames for speed
+    sample_step = max(1, total // 500)
+    scenes = []
+    prev_hist = None
+    frame_idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_idx % sample_step == 0:
+            # Resize for speed
+            small = cv2.resize(frame, (160, 90))
+            hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            hist = cv2.normalize(hist, hist).flatten()
+            if prev_hist is not None:
+                corr = float(cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL))
+                if corr < threshold:
+                    scenes.append({
+                        "frame": frame_idx,
+                        "timestamp_sec": round(frame_idx / fps, 3),
+                        "timestamp": sec_to_tc(frame_idx / fps),
+                        "correlation": round(corr, 3),
+                    })
+            prev_hist = hist
+        frame_idx += 1
+
+    cap.release()
+    return scenes
+
+
+def detect_motion_energy(video_path: str, max_samples: int = 100) -> list[dict]:
+    """Return per-frame motion energy scores for timeline waveform."""
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    step = max(1, total // max_samples)
+
+    energy = []
+    prev_gray = None
+    idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if idx % step == 0:
+            small = cv2.resize(frame, (80, 45))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            if prev_gray is not None:
+                diff = cv2.absdiff(gray, prev_gray)
+                score = float(diff.mean()) / 255.0
+                energy.append({"t": round(idx / fps, 2), "e": round(score, 4)})
+            prev_gray = gray
+        idx += 1
+
+    cap.release()
+    return energy
+
+
+def sec_to_tc(sec: float, srt: bool = False) -> str:
+    """Convert seconds to timecode HH:MM:SS.mmm or SRT format."""
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    if srt:
+        ms = int((s % 1) * 1000)
+        return f"{h:02d}:{m:02d}:{int(s):02d},{ms:03d}"
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
+def sec_to_tc_short(sec: float) -> str:
+    m = int(sec // 60)
+    s = sec % 60
+    return f"{m}:{s:05.2f}"
+
+
+def ffmpeg_available() -> bool:
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+# ── Models ─────────────────────────────────────────────────────────────────
 
 class Message(BaseModel):
     role: str
@@ -214,205 +199,235 @@ class VideoExtractResponse(BaseModel):
     width: int
     height: int
     filename: str
+    scenes: list[dict]
+    energy: list[dict]
 
 
-def build_tools(enable_web_search: bool, enable_code_execution: bool) -> list:
+# ── Chat streaming ─────────────────────────────────────────────────────────
+
+def build_tools(ws: bool, ce: bool) -> list:
     tools = []
-    if enable_web_search:
+    if ws:
         tools.append({"type": "web_search_20260209", "name": "web_search"})
-    if enable_code_execution:
+    if ce:
         tools.append({"type": "code_execution_20260120", "name": "code_execution"})
     return tools
 
 
-def convert_messages(messages: list[Message]) -> list[dict]:
-    converted = []
-    for msg in messages:
-        converted.append({"role": msg.role, "content": msg.content})
-    return converted
-
-
-def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list[bytes], dict]:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError("Cannot open video file")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    duration_sec = total_frames / fps
-
-    step = max(1, total_frames // max_frames)
-    frame_indices = list(range(0, total_frames, step))[:max_frames]
-
-    frames_bytes = []
-    timestamps = []
-
-    for idx in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if not ret:
-            continue
-
-        # Resize to max 1280px wide
-        h, w = frame.shape[:2]
-        if w > 1280:
-            scale = 1280 / w
-            frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
-
-        # Convert BGR → RGB → JPEG
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb)
-        buf = io.BytesIO()
-        pil_img.save(buf, format="JPEG", quality=85)
-        frames_bytes.append((buf.getvalue(), idx / fps))
-
-    cap.release()
-
-    meta = {
-        "duration_sec": duration_sec,
-        "fps": fps,
-        "total_frames": total_frames,
-        "width": width,
-        "height": height,
-    }
-    return frames_bytes, meta
-
-
 async def stream_response(request: ChatRequest) -> AsyncGenerator[str, None]:
     tools = build_tools(request.enable_web_search, request.enable_code_execution)
-    messages = convert_messages(request.messages)
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    system_prompt = request.system or (
-        "You are OmniAI, a highly capable multimodal AI assistant that can understand text, "
-        "images, documents, video frames, and code. You can search the web for current information, "
-        "execute code, analyze images/videos/files, and engage in complex reasoning. Be helpful, "
-        "accurate, and thorough."
+    system = request.system or (
+        "You are OmniAI, a highly capable multimodal AI assistant that understands text, images, "
+        "documents, video frames, and code. You can search the web and execute code."
     )
 
     kwargs = {
         "model": request.model,
         "max_tokens": 16000,
-        "system": system_prompt,
+        "system": system,
         "messages": messages,
     }
-
     if tools:
         kwargs["tools"] = tools
         kwargs["betas"] = ["web-search-2026-02-09", "code-execution-2026-01-20"]
-
     if request.enable_thinking:
         kwargs["thinking"] = {"type": "adaptive"}
 
     try:
         with client.messages.stream(**kwargs) as stream:
             for event in stream:
-                event_type = type(event).__name__
-
-                if event_type == "RawContentBlockStartEvent":
-                    block = event.content_block
-                    block_type = block.type if hasattr(block, "type") else None
-                    if block_type == "thinking":
+                t = type(event).__name__
+                if t == "RawContentBlockStartEvent":
+                    bt = getattr(event.content_block, "type", None)
+                    if bt == "thinking":
                         yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
-                    elif block_type == "text":
+                    elif bt == "text":
                         yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
-                    elif block_type == "tool_use":
-                        tool_name = block.name if hasattr(block, "name") else "tool"
-                        yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name})}\n\n"
-
-                elif event_type == "RawContentBlockDeltaEvent":
-                    delta = event.delta
-                    delta_type = delta.type if hasattr(delta, "type") else None
-                    if delta_type == "thinking_delta":
-                        yield f"data: {json.dumps({'type': 'thinking', 'text': delta.thinking})}\n\n"
-                    elif delta_type == "text_delta":
-                        yield f"data: {json.dumps({'type': 'text', 'text': delta.text})}\n\n"
-                    elif delta_type == "input_json_delta":
-                        yield f"data: {json.dumps({'type': 'tool_input', 'text': delta.partial_json})}\n\n"
-
-                elif event_type == "RawContentBlockStopEvent":
+                    elif bt == "tool_use":
+                        yield f"data: {json.dumps({'type': 'tool_start', 'tool': getattr(event.content_block, 'name', 'tool')})}\n\n"
+                elif t == "RawContentBlockDeltaEvent":
+                    dt = getattr(event.delta, "type", None)
+                    if dt == "thinking_delta":
+                        yield f"data: {json.dumps({'type': 'thinking', 'text': event.delta.thinking})}\n\n"
+                    elif dt == "text_delta":
+                        yield f"data: {json.dumps({'type': 'text', 'text': event.delta.text})}\n\n"
+                    elif dt == "input_json_delta":
+                        yield f"data: {json.dumps({'type': 'tool_input', 'text': event.delta.partial_json})}\n\n"
+                elif t == "RawContentBlockStopEvent":
                     yield f"data: {json.dumps({'type': 'block_stop'})}\n\n"
-
-                elif event_type == "RawMessageStopEvent":
-                    final = stream.get_final_message()
-                    yield f"data: {json.dumps({'type': 'done', 'stop_reason': final.stop_reason})}\n\n"
-
+                elif t == "RawMessageStopEvent":
+                    yield f"data: {json.dumps({'type': 'done', 'stop_reason': stream.get_final_message().stop_reason})}\n\n"
     except anthropic.APIError as e:
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': f'Unexpected error: {str(e)}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
 
-async def stream_video_analysis(
+# ── AI Video Editor (structured JSON output) ────────────────────────────────
+
+AI_EDIT_PROMPT = """You are a world-class video editor with 20 years of experience in Hollywood films, documentaries, and viral content.
+I am giving you {n} frames extracted from a video (duration: ~{duration}s, timestamps: {timestamps}).
+
+Your job: produce a COMPLETE, PROFESSIONAL edit package as strict JSON. No prose before or after — ONLY the JSON object.
+
+{{
+  "summary": "One-sentence description of the video content",
+  "genre": "documentary|interview|vlog|commercial|music_video|tutorial|narrative|other",
+  "overall_score": 7,
+  "pacing": {{
+    "current_cpm": 4.2,
+    "recommended_cpm": 8.0,
+    "rating": "too_slow|good|too_fast",
+    "verdict": "Short note on pacing"
+  }},
+  "scenes": [
+    {{
+      "id": 1,
+      "title": "Scene title",
+      "in_point": "00:00:00.000",
+      "out_point": "00:00:08.500",
+      "type": "action|dialogue|broll|transition|title|credits",
+      "mood": "energetic|calm|tense|emotional|neutral",
+      "keep": true,
+      "quality_score": 8,
+      "notes": "Why this scene works or doesn't"
+    }}
+  ],
+  "edit_decisions": [
+    {{
+      "action": "CUT|KEEP|TRIM|SPEED|FREEZE|FADE_IN|FADE_OUT|DISSOLVE",
+      "in_point": "00:00:00.000",
+      "out_point": "00:00:05.000",
+      "speed": 1.0,
+      "reason": "Specific reason for this edit decision"
+    }}
+  ],
+  "color_grade": {{
+    "style": "Cinematic|Natural|Moody|Commercial|Vintage|Cold|Warm",
+    "temperature": 5500,
+    "tint": 0,
+    "exposure": 0.1,
+    "contrast": 15,
+    "highlights": -25,
+    "shadows": 10,
+    "whites": 5,
+    "blacks": -10,
+    "vibrance": 15,
+    "saturation": 5,
+    "lut_suggestion": "Kodak 5218 / Fuji 3510",
+    "davinci_node_order": "Primary Wheels → Custom Curves → Qualifier (skin tone) → Output",
+    "premiere_lumetri": "Basic correction → Creative → Color Wheels",
+    "reasoning": "Why this color treatment fits the content"
+  }},
+  "audio": {{
+    "silence_sections": [
+      {{"start": "00:00:03.0", "end": "00:00:05.0", "remove": true, "reason": "Dead air"}}
+    ],
+    "music_sync_points": [
+      {{"timestamp": "00:00:04.2", "type": "beat_hit|transition|drop|emotion_peak", "note": "Cut here on beat"}}
+    ],
+    "music_genre_suggestion": "Electronic / Cinematic / Lo-fi / etc",
+    "audio_design_notes": "Specific sound design recommendations"
+  }},
+  "captions": [
+    {{"id": 1, "start": "00:00:00,000", "end": "00:00:02,500", "speaker": "Person 1", "text": "Inferred or visible dialogue"}}
+  ],
+  "broll_suggestions": [
+    {{"at_timecode": "00:00:10.0", "suggestion": "Cutaway to close-up of hands", "reason": "Talking head needs visual relief"}}
+  ],
+  "motion_graphics": [
+    {{"timecode": "00:00:01.0", "type": "lower_third|title_card|callout|logo|end_card", "text": "Suggested overlay text", "duration": 3.0}}
+  ],
+  "shorts_clip": {{
+    "best_start": "00:00:15.000",
+    "best_end": "00:00:45.000",
+    "hook_text": "Best 6-word hook for thumbnail/caption",
+    "vertical_crop": "crop=720:1280:280:0",
+    "virality_score": 7
+  }},
+  "thumbnail": {{
+    "best_frame_timestamp": "00:00:12.5",
+    "text_overlay": "THUMBNAIL TEXT HERE",
+    "composition_notes": "Subject on left third, high contrast background"
+  }},
+  "ffmpeg_commands": [
+    {{
+      "label": "Remove silence at 3s-5s",
+      "command": "ffmpeg -i INPUT.mp4 -filter_complex \\"[0:v]trim=0:3,setpts=PTS-STARTPTS[v1];[0:v]trim=5,setpts=PTS-STARTPTS[v2];[v1][v2]concat=n=2:v=1[out]\\" -map \\"[out]\\" OUTPUT.mp4"
+    }},
+    {{
+      "label": "Apply color grade",
+      "command": "ffmpeg -i INPUT.mp4 -vf \\"eq=brightness=0.05:contrast=1.15:saturation=1.2,curves=r='0/0 0.5/0.53 1/1':g='0/0 0.5/0.5 1/1':b='0/0 0.5/0.47 1/0.95'\\" OUTPUT_graded.mp4"
+    }},
+    {{
+      "label": "Export vertical Shorts (9:16)",
+      "command": "ffmpeg -i INPUT.mp4 -vf \\"crop=ih*9/16:ih\\" -ss 00:00:15 -to 00:00:45 SHORTS.mp4"
+    }},
+    {{
+      "label": "Speed up slow sections",
+      "command": "ffmpeg -i INPUT.mp4 -filter:v \\"setpts=0.5*PTS\\" -filter:a \\"atempo=2.0\\" OUTPUT_fast.mp4"
+    }}
+  ],
+  "top_issues": [
+    "Issue 1 with specific timecode",
+    "Issue 2"
+  ],
+  "top_strengths": [
+    "Strength 1",
+    "Strength 2"
+  ],
+  "recommended_final_duration": 45.0
+}}
+
+Estimate all timestamps from the provided frame positions. Be creative, specific, and professional.
+Generate realistic dialogue for captions based on visual context.
+The FFmpeg commands must be VALID and EXECUTABLE — use real filter syntax.
+Output ONLY the JSON. No markdown code blocks, no explanation."""
+
+
+async def stream_ai_edit(
     frame_file_ids: list[str],
     timestamps: list[float],
-    task: str,
     model: str,
+    duration: float,
 ) -> AsyncGenerator[str, None]:
-    prompt_text = VIDEO_ANALYSIS_PROMPTS.get(task, VIDEO_ANALYSIS_PROMPTS["full"])
     n = len(frame_file_ids)
-    duration_hint = timestamps[-1] if timestamps else 0
+    ts_str = str([round(t, 1) for t in timestamps])
 
-    content = []
-    content.append({
-        "type": "text",
-        "text": (
-            f"{prompt_text}\n\n"
-            f"---\n"
-            f"Video info: {n} frames extracted, video duration ~{duration_hint:.0f}s. "
-            f"Frames are evenly sampled from start to end. "
-            f"Frame timestamps (seconds): {[round(t, 1) for t in timestamps]}\n"
-            f"---\n\n"
-            f"Here are the {n} video frames:"
-        ),
-    })
+    prompt = AI_EDIT_PROMPT.format(n=n, duration=round(duration, 1), timestamps=ts_str)
 
+    content = [{"type": "text", "text": prompt}]
     for i, fid in enumerate(frame_file_ids):
-        content.append({
-            "type": "image",
-            "source": {"type": "file", "file_id": fid},
-        })
-        content.append({
-            "type": "text",
-            "text": f"[Frame {i+1} @ {timestamps[i]:.1f}s]",
-        })
+        content.append({"type": "image", "source": {"type": "file", "file_id": fid}})
+        content.append({"type": "text", "text": f"[Frame {i+1} @ {timestamps[i]:.1f}s]"})
 
+    full_text = ""
     try:
         with client.messages.stream(
             model=model,
             max_tokens=8000,
-            thinking={"type": "adaptive"},
             messages=[{"role": "user", "content": content}],
             betas=["files-api-2025-04-14"],
         ) as stream:
             for event in stream:
-                event_type = type(event).__name__
-
-                if event_type == "RawContentBlockStartEvent":
-                    block = event.content_block
-                    block_type = block.type if hasattr(block, "type") else None
-                    if block_type == "thinking":
-                        yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
-                    elif block_type == "text":
-                        yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
-
-                elif event_type == "RawContentBlockDeltaEvent":
-                    delta = event.delta
-                    delta_type = delta.type if hasattr(delta, "type") else None
-                    if delta_type == "thinking_delta":
-                        yield f"data: {json.dumps({'type': 'thinking', 'text': delta.thinking})}\n\n"
-                    elif delta_type == "text_delta":
-                        yield f"data: {json.dumps({'type': 'text', 'text': delta.text})}\n\n"
-
-                elif event_type == "RawContentBlockStopEvent":
-                    yield f"data: {json.dumps({'type': 'block_stop'})}\n\n"
-
-                elif event_type == "RawMessageStopEvent":
+                t = type(event).__name__
+                if t == "RawContentBlockDeltaEvent":
+                    dt = getattr(event.delta, "type", None)
+                    if dt == "text_delta":
+                        full_text += event.delta.text
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+                elif t == "RawMessageStopEvent":
+                    # Try to parse JSON
+                    try:
+                        # Remove any markdown code fences
+                        clean = re.sub(r"```(?:json)?\s*", "", full_text).strip()
+                        parsed = json.loads(clean)
+                        yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
+                    except json.JSONDecodeError as e:
+                        yield f"data: {json.dumps({'type': 'parse_error', 'raw': full_text, 'error': str(e)})}\n\n"
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-    except anthropic.APIError as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -432,28 +447,23 @@ async def chat(request: ChatRequest):
 async def upload_file(file: UploadFile = File(...)):
     content = await file.read()
     media_type = file.content_type or "application/octet-stream"
-
     if len(content) > 32 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 32MB)")
-
-    supported_types = {
+    supported = {
         "image/jpeg", "image/png", "image/gif", "image/webp",
-        "application/pdf",
-        "text/plain", "text/html", "text/css", "text/javascript",
-        "text/markdown", "text/csv", "application/json",
+        "application/pdf", "text/plain", "text/html", "text/css",
+        "text/javascript", "text/markdown", "text/csv", "application/json",
     }
-
-    if media_type not in supported_types:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type: {media_type}")
-
+    if media_type not in supported:
+        raise HTTPException(status_code=415, detail=f"Unsupported: {media_type}")
     try:
         uploaded = client.beta.files.upload(file=(file.filename, content, media_type))
         return FileUploadResponse(file_id=uploaded.id, filename=file.filename, media_type=media_type)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/extract-video-frames", response_model=VideoExtractResponse)
+@app.post("/api/extract-video-frames")
 async def extract_video_frames(
     file: UploadFile = File(...),
     max_frames: int = Form(20),
@@ -463,13 +473,11 @@ async def extract_video_frames(
         "video/x-matroska", "video/webm", "video/mpeg",
         "video/3gpp", "video/x-flv",
     }
-    media_type = file.content_type or ""
-
-    # Some browsers report wrong MIME for .mov etc — allow by extension too
-    filename = file.filename or ""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    filename = file.filename or "video.mp4"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp4"
     video_exts = {"mp4", "mov", "avi", "mkv", "webm", "mpeg", "mpg", "3gp", "flv", "m4v"}
 
+    media_type = file.content_type or ""
     if media_type not in video_types and ext not in video_exts:
         raise HTTPException(status_code=415, detail=f"Not a video file: {media_type}")
 
@@ -477,8 +485,7 @@ async def extract_video_frames(
     if len(content) > 500 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Video too large (max 500MB)")
 
-    # Write to temp file for cv2
-    suffix = f".{ext}" if ext else ".mp4"
+    suffix = f".{ext}"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
@@ -486,59 +493,152 @@ async def extract_video_frames(
     try:
         max_frames = min(max(1, max_frames), 30)
         frames_data, meta = extract_frames_cv2(tmp_path, max_frames)
+        scenes = detect_scenes_cv2(tmp_path)
+        energy = detect_motion_energy(tmp_path)
     finally:
         os.unlink(tmp_path)
 
     if not frames_data:
-        raise HTTPException(status_code=422, detail="Could not extract frames from video")
+        raise HTTPException(status_code=422, detail="Could not extract frames")
 
-    # Upload all frames to Files API
     video_frames = []
     for i, (jpeg_bytes, ts) in enumerate(frames_data):
         frame_name = f"frame_{i:03d}_{ts:.1f}s.jpg"
-        try:
-            uploaded = client.beta.files.upload(
-                file=(frame_name, jpeg_bytes, "image/jpeg")
-            )
-            video_frames.append(VideoFrame(
-                file_id=uploaded.id,
-                timestamp_sec=round(ts, 2),
-                frame_index=i,
-            ))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Frame upload failed: {str(e)}")
+        uploaded = client.beta.files.upload(file=(frame_name, jpeg_bytes, "image/jpeg"))
+        video_frames.append(VideoFrame(file_id=uploaded.id, timestamp_sec=round(ts, 2), frame_index=i))
 
-    return VideoExtractResponse(
-        frames=video_frames,
-        filename=filename,
+    return {
+        "frames": [f.dict() for f in video_frames],
+        "filename": filename,
+        "scenes": scenes,
+        "energy": energy,
         **meta,
-    )
+    }
 
 
-@app.post("/api/analyze-video")
-async def analyze_video(
+@app.post("/api/ai-edit")
+async def ai_edit(
     frame_ids: str = Form(...),
     timestamps: str = Form(...),
-    task: str = Form("full"),
     model: str = Form("claude-opus-4-8"),
+    duration: float = Form(0),
 ):
     try:
         ids = json.loads(frame_ids)
         ts = json.loads(timestamps)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=422, detail="Invalid frame_ids or timestamps JSON")
-
+        raise HTTPException(status_code=422, detail="Invalid JSON")
     if not ids:
-        raise HTTPException(status_code=422, detail="No frames provided")
-
-    valid_tasks = set(VIDEO_ANALYSIS_PROMPTS.keys())
-    if task not in valid_tasks:
-        task = "full"
+        raise HTTPException(status_code=422, detail="No frames")
 
     return StreamingResponse(
-        stream_video_analysis(ids, ts, task, model),
+        stream_ai_edit(ids, ts, model, duration),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/export-srt")
+async def export_srt(captions: str = Form(...), filename: str = Form("subtitles")):
+    try:
+        caps = json.loads(captions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid captions JSON")
+
+    lines = []
+    for i, c in enumerate(caps, 1):
+        lines.append(str(i))
+        lines.append(f"{c.get('start', '00:00:00,000')} --> {c.get('end', '00:00:02,000')}")
+        speaker = f"[{c['speaker']}] " if c.get("speaker") else ""
+        lines.append(f"{speaker}{c.get('text', '')}")
+        lines.append("")
+
+    srt_content = "\n".join(lines)
+    return Response(
+        content=srt_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.srt"'},
+    )
+
+
+@app.post("/api/export-edl")
+async def export_edl(
+    edit_decisions: str = Form(...),
+    filename: str = Form("edit"),
+    fps: float = Form(25.0),
+):
+    try:
+        decisions = json.loads(edit_decisions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+
+    def tc_to_frames(tc: str, fps: float) -> int:
+        parts = tc.replace(",", ".").split(":")
+        try:
+            h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+        except (IndexError, ValueError):
+            return 0
+        total_sec = h * 3600 + m * 60 + s
+        return int(total_sec * fps)
+
+    lines = [
+        "TITLE: OmniAI Edit",
+        f"FCM: NON-DROP FRAME",
+        "",
+    ]
+    event_num = 1
+    for d in decisions:
+        if d.get("action") in ("KEEP", "TRIM", "SPEED"):
+            in_tc = d.get("in_point", "00:00:00.000").replace(".", ":")
+            out_tc = d.get("out_point", "00:00:05.000").replace(".", ":")
+            lines.append(f"{event_num:03d}  AX  V     C        {in_tc} {out_tc} {in_tc} {out_tc}")
+            if d.get("reason"):
+                lines.append(f"* FROM CLIP NAME: {d['reason'][:60]}")
+            lines.append("")
+            event_num += 1
+
+    edl_content = "\n".join(lines)
+    return Response(
+        content=edl_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.edl"'},
+    )
+
+
+@app.post("/api/export-ffmpeg-script")
+async def export_ffmpeg_script(
+    commands: str = Form(...),
+    filename: str = Form("edit_script"),
+):
+    try:
+        cmds = json.loads(commands)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+
+    lines = [
+        "#!/bin/bash",
+        "# OmniAI — Auto-generated FFmpeg Edit Script",
+        "# Replace INPUT.mp4 with your actual video file",
+        "",
+        'INPUT="$1"',
+        'if [ -z "$INPUT" ]; then',
+        '  echo "Usage: ./edit_script.sh your_video.mp4"',
+        "  exit 1",
+        "fi",
+        "",
+    ]
+    for i, cmd in enumerate(cmds, 1):
+        label = cmd.get("label", f"Step {i}")
+        command = cmd.get("command", "").replace("INPUT.mp4", '"$INPUT"')
+        lines.append(f"# Step {i}: {label}")
+        lines.append(command)
+        lines.append("")
+
+    script = "\n".join(lines)
+    return Response(
+        content=script,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.sh"'},
     )
 
 
@@ -551,21 +651,9 @@ async def delete_file(file_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/models")
-async def list_models():
-    return {
-        "models": [
-            {"id": "claude-opus-4-8", "name": "Claude Opus 4.8", "description": "Most capable"},
-            {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "description": "Balanced"},
-            {"id": "claude-haiku-4-5", "name": "Claude Haiku 4.5", "description": "Fastest"},
-            {"id": "claude-fable-5", "name": "Claude Fable 5", "description": "Most powerful"},
-        ]
-    }
-
-
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "ffmpeg": ffmpeg_available()}
 
 
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
