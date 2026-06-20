@@ -345,6 +345,29 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
 .toast.info{background:rgba(124,58,237,.15);border:1px solid var(--accent);color:#c4b5fd}
 @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
+/* Frame thumbnail image */
+.ft-img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* Export section labels */
+.export-section-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px}
+
+/* 3-column export grid for process cards */
+.export-grid-3{grid-template-columns:1fr 1fr 1fr}
+
+/* Process cards */
+.exp-card-process{border-color:rgba(220,38,38,.25);background:rgba(220,38,38,.04)}
+.exp-card-process:hover{border-color:rgba(220,38,38,.5)}
+
+.exp-btn-red{background:linear-gradient(135deg,#dc2626,#7c3aed)}
+.exp-btn-red:hover{box-shadow:0 4px 16px rgba(220,38,38,.5)}
+.exp-btn-red:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
+
+/* Processing status line */
+.exp-proc-status{font-size:11.5px;min-height:16px;margin-top:2px;margin-bottom:4px}
+.proc-anim{color:var(--text3);display:flex;align-items:center;gap:5px}
+
+@media(max-width:900px){.export-grid-3{grid-template-columns:1fr 1fr}}
+
 .hidden{display:none!important}
 
 @media(max-width:720px){

@@ -35,6 +35,7 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dict]:
+    """Returns list of (main_jpeg_bytes, thumb_jpeg_bytes, timestamp_sec) tuples."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError("Cannot open video file")
@@ -55,13 +56,26 @@ def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dic
         if not ret:
             continue
         h, w = frame.shape[:2]
+
+        # Main frame for AI (max 1280px wide)
         if w > 1280:
             scale = 1280 / w
-            frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            main_frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            main_frame = frame
+        rgb = cv2.cvtColor(main_frame, cv2.COLOR_BGR2RGB)
         buf = io.BytesIO()
         Image.fromarray(rgb).save(buf, format="JPEG", quality=82)
-        frames_data.append((buf.getvalue(), idx / fps))
+        main_bytes = buf.getvalue()
+
+        # Thumbnail for filmstrip UI (160x90)
+        thumb = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
+        thumb_rgb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+        tbuf = io.BytesIO()
+        Image.fromarray(thumb_rgb).save(tbuf, format="JPEG", quality=72)
+        thumb_bytes = tbuf.getvalue()
+
+        frames_data.append((main_bytes, thumb_bytes, idx / fps))
 
     cap.release()
     return frames_data, {
@@ -163,6 +177,101 @@ def ffmpeg_available() -> bool:
         return False
 
 
+def tc_to_sec(tc: str) -> float:
+    """Parse HH:MM:SS.mmm or HH:MM:SS,mmm timecode to seconds."""
+    if not tc:
+        return 0.0
+    try:
+        parts = tc.replace(",", ".").split(":")
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    except (IndexError, ValueError):
+        return 0.0
+
+
+def build_edit_filter(decisions: list) -> tuple[str, str]:
+    """Build FFmpeg filter_complex string for cut decisions.
+    Returns (filter_complex, output_maps). Empty strings if passthrough.
+    """
+    keeps = [d for d in decisions if d.get("action") not in ("CUT", "FADE_IN", "FADE_OUT", "DISSOLVE")]
+    if not keeps:
+        return "", ""
+
+    segments_v, segments_a = [], []
+    valid = 0
+    for i, d in enumerate(keeps):
+        in_s = tc_to_sec(d.get("in_point", "00:00:00.000"))
+        out_s = tc_to_sec(d.get("out_point", "00:00:05.000"))
+        if out_s <= in_s or (out_s - in_s) < 0.1:
+            continue
+        speed = max(0.25, min(4.0, float(d.get("speed") or 1.0)))
+
+        vf = f"[0:v]trim={in_s:.3f}:{out_s:.3f},setpts=PTS-STARTPTS"
+        if speed != 1.0:
+            vf += f",setpts={1/speed:.4f}*PTS"
+        vf += f"[v{valid}]"
+        segments_v.append(vf)
+
+        af = f"[0:a]atrim={in_s:.3f}:{out_s:.3f},asetpts=PTS-STARTPTS"
+        if speed != 1.0 and 0.5 <= speed <= 2.0:
+            af += f",atempo={speed:.4f}"
+        af += f"[a{valid}]"
+        segments_a.append(af)
+        valid += 1
+
+    if not segments_v:
+        return "", ""
+
+    n = valid
+    concat_v = "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv_raw]"
+    concat_a = "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[outa]"
+    fc = ";".join(segments_v + segments_a + [concat_v, concat_a])
+    return fc, "[outv_raw][outa]"
+
+
+def build_color_filter(cg: dict) -> str:
+    """Build an FFmpeg vf filter chain from AI color_grade JSON."""
+    if not cg:
+        return ""
+
+    exposure = float(cg.get("exposure", 0))
+    contrast = float(cg.get("contrast", 0))
+    saturation = float(cg.get("saturation", 0))
+    vibrance = float(cg.get("vibrance", 0))
+    highlights = float(cg.get("highlights", 0))
+    shadows = float(cg.get("shadows", 0))
+
+    brightness = max(-0.4, min(0.4, exposure / 10.0))
+    ffmpeg_contrast = max(0.4, min(2.5, 1.0 + contrast / 100.0))
+    ffmpeg_sat = max(0.0, min(2.5, 1.0 + (saturation + vibrance * 0.4) / 100.0))
+
+    parts = [f"eq=brightness={brightness:.3f}:contrast={ffmpeg_contrast:.3f}:saturation={ffmpeg_sat:.3f}"]
+
+    # Highlights / shadows via master curves
+    if abs(highlights) > 3 or abs(shadows) > 3:
+        sh = max(-0.12, min(0.12, shadows / 100.0 * 0.12))
+        hl = max(-0.12, min(0.12, highlights / 100.0 * 0.12))
+        p1 = max(0.05, min(0.95, 0.25 + sh))
+        p2 = max(0.05, min(0.95, 0.75 + hl))
+        parts.append(f"curves=m='0/0 0.25/{p1:.3f} 0.75/{p2:.3f} 1/1'")
+
+    # Color temperature via RGB curves
+    temp = float(cg.get("temperature", 5500))
+    if temp < 4800:
+        shift = min(0.14, (4800 - temp) / 4800.0 * 0.14)
+        parts.append(
+            f"curves=r='0/0 1/{min(1.0,1+shift):.3f}'"
+            f":b='0/0 1/{max(0.72,1-shift):.3f}'"
+        )
+    elif temp > 6300:
+        shift = min(0.1, (temp - 6300) / 6300.0 * 0.1)
+        parts.append(
+            f"curves=r='0/0 1/{max(0.82,1-shift):.3f}'"
+            f":b='0/0 1/{min(1.0,1+shift):.3f}'"
+        )
+
+    return ",".join(parts)
+
+
 # ── Models ─────────────────────────────────────────────────────────────────
 
 class Message(BaseModel):
@@ -189,6 +298,7 @@ class VideoFrame(BaseModel):
     file_id: str
     timestamp_sec: float
     frame_index: int
+    thumbnail_b64: str = ""  # data:image/jpeg;base64,... for filmstrip display
 
 
 class VideoExtractResponse(BaseModel):
@@ -502,10 +612,16 @@ async def extract_video_frames(
         raise HTTPException(status_code=422, detail="Could not extract frames")
 
     video_frames = []
-    for i, (jpeg_bytes, ts) in enumerate(frames_data):
+    for i, (main_bytes, thumb_bytes, ts) in enumerate(frames_data):
         frame_name = f"frame_{i:03d}_{ts:.1f}s.jpg"
-        uploaded = client.beta.files.upload(file=(frame_name, jpeg_bytes, "image/jpeg"))
-        video_frames.append(VideoFrame(file_id=uploaded.id, timestamp_sec=round(ts, 2), frame_index=i))
+        uploaded = client.beta.files.upload(file=(frame_name, main_bytes, "image/jpeg"))
+        thumb_b64 = "data:image/jpeg;base64," + base64.b64encode(thumb_bytes).decode()
+        video_frames.append(VideoFrame(
+            file_id=uploaded.id,
+            timestamp_sec=round(ts, 2),
+            frame_index=i,
+            thumbnail_b64=thumb_b64,
+        ))
 
     return {
         "frames": [f.dict() for f in video_frames],
@@ -649,6 +765,167 @@ async def delete_file(file_id: str):
         return {"status": "deleted", "file_id": file_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/process-video")
+async def process_video_op(
+    file: UploadFile = File(...),
+    operation: str = Form("full_edit"),   # full_edit | shorts | color_grade
+    edit_decisions: str = Form("[]"),
+    color_grade: str = Form("{}"),
+    shorts_clip: str = Form("{}"),
+):
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on this server")
+
+    try:
+        decisions = json.loads(edit_decisions)
+        cg = json.loads(color_grade)
+        sc = json.loads(shorts_clip)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
+
+    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp_in.write(content)
+    tmp_in.close()
+    in_path = tmp_in.name
+    out_path = in_path + "_out.mp4"
+
+    try:
+        color_vf = build_color_filter(cg)
+
+        if operation == "color_grade":
+            if color_vf:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", color_vf,
+                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                       "-c:a", "copy", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
+        elif operation == "shorts":
+            start_s = tc_to_sec(sc.get("best_start", "00:00:00.000"))
+            end_s = tc_to_sec(sc.get("best_end", "00:00:30.000"))
+            crop = sc.get("vertical_crop", "crop=ih*9/16:ih")
+            # Strip any 'crop=' prefix if AI included it
+            if "=" in crop and not crop.startswith("crop"):
+                crop = f"crop={crop.split('=',1)[1]}"
+            vf_chain = crop + (f",{color_vf}" if color_vf else "")
+            cmd = ["ffmpeg", "-y",
+                   "-ss", str(start_s), "-to", str(end_s),
+                   "-i", in_path,
+                   "-vf", vf_chain,
+                   "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                   "-c:a", "aac", "-b:a", "192k", out_path]
+
+        else:  # full_edit
+            fc, maps = build_edit_filter(decisions)
+            if fc:
+                if color_vf:
+                    # Apply color grade on outv_raw → outv_colored
+                    fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
+                    cmd = ["ffmpeg", "-y", "-i", in_path,
+                           "-filter_complex", fc_full,
+                           "-map", "[outv_colored]", "-map", "[outa]",
+                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                           "-c:a", "aac", "-b:a", "192k", out_path]
+                else:
+                    # Use outv_raw directly as output
+                    cmd = ["ffmpeg", "-y", "-i", in_path,
+                           "-filter_complex", fc,
+                           "-map", "[outv_raw]", "-map", "[outa]",
+                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                           "-c:a", "aac", "-b:a", "192k", out_path]
+            elif color_vf:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", color_vf,
+                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                       "-c:a", "copy", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
+
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")[-1500:]
+            # Fallback: if filter_complex failed, try color-grade-only or straight copy
+            if operation == "full_edit" and fc:
+                fallback_vf = color_vf if color_vf else None
+                if fallback_vf:
+                    fallback_cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", fallback_vf,
+                                    "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                                    "-c:a", "copy", out_path]
+                else:
+                    fallback_cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+                result2 = subprocess.run(fallback_cmd, capture_output=True, timeout=600)
+                if result2.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+            else:
+                raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            raise HTTPException(status_code=500, detail="FFmpeg produced no output")
+
+        with open(out_path, "rb") as f:
+            video_data = f.read()
+
+        suffix_map = {"full_edit": "edited", "shorts": "shorts_9x16", "color_grade": "color_graded"}
+        out_name = f"{original_name}_{suffix_map.get(operation,'processed')}.mp4"
+
+        return Response(
+            content=video_data,
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
+        )
+    finally:
+        for p in [in_path, out_path]:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+
+
+@app.post("/api/extract-thumbnail")
+async def extract_thumbnail(
+    file: UploadFile = File(...),
+    timestamp: float = Form(0.0),
+):
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp.write(content)
+    tmp.close()
+    try:
+        cap = cv2.VideoCapture(tmp.name)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        target_frame = int(timestamp * fps)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            raise HTTPException(status_code=404, detail="Frame not found at timestamp")
+        h, w = frame.shape[:2]
+        # Full-res thumbnail (max 1920px)
+        if w > 1920:
+            scale = 1920 / w
+            frame = cv2.resize(frame, (1920, int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, format="JPEG", quality=95)
+        jpeg_bytes = buf.getvalue()
+        base_name = (file.filename or "frame").rsplit(".", 1)[0]
+        return Response(
+            content=jpeg_bytes,
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}_thumbnail.jpg"'},
+        )
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
 
 
 @app.get("/api/health")

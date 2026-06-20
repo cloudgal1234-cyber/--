@@ -207,7 +207,6 @@ function autoResize() {
 }
 function scrollDown() { el.messages.scrollTop = el.messages.scrollHeight; }
 function showChat() { el.emptyState.classList.add('hidden'); el.messages.classList.remove('hidden'); }
-function esc(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function toggleThinking(h) {
   h.classList.toggle('collapsed');
   h.parentElement.querySelector('.thinking-content').classList.toggle('hidden');
@@ -494,14 +493,22 @@ function buildFilmstrip() {
     div.className = 'frame-thumb';
     const isScene = sceneTimestamps.has(Math.round(frame.timestamp_sec * 10));
     if (isScene) div.classList.add('scene-start');
-    div.innerHTML = `
-      <div class="ft-bg">
-        <span>F${i+1}</span>
-        <span style="font-size:8px;color:var(--text3)">${fmt(frame.timestamp_sec)}</span>
-      </div>
-      <span class="ft-ts">${fmt(frame.timestamp_sec)}</span>
-      ${isScene ? '<span class="ft-scene-mark"></span>' : ''}
-    `;
+    if (frame.thumbnail_b64) {
+      div.innerHTML = `
+        <img class="ft-img" src="${frame.thumbnail_b64}" alt="F${i+1}" loading="lazy"/>
+        <span class="ft-ts">${fmt(frame.timestamp_sec)}</span>
+        ${isScene ? '<span class="ft-scene-mark"></span>' : ''}
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="ft-bg">
+          <span>F${i+1}</span>
+          <span style="font-size:8px;color:var(--text3)">${fmt(frame.timestamp_sec)}</span>
+        </div>
+        <span class="ft-ts">${fmt(frame.timestamp_sec)}</span>
+        ${isScene ? '<span class="ft-scene-mark"></span>' : ''}
+      `;
+    }
     div.addEventListener('click', () => { el.vPlayer.currentTime = frame.timestamp_sec; el.vPlayer.play(); });
     el.filmstrip.appendChild(div);
   });
@@ -834,7 +841,40 @@ function renderEditResults(d) {
   const hasCaptions = !!(d.captions?.length);
   const hasEdits = !!(d.edit_decisions?.length);
   const hasFfmpeg = !!(d.ffmpeg_commands?.length);
+  const hasShortsClip = !!(d.shorts_clip?.best_start);
   el.tabExport.innerHTML = `
+    <div class="export-section-label">🎬 Server-Side Video Processing</div>
+    <div class="export-grid export-grid-3">
+      <div class="exp-card exp-card-process">
+        <div class="exp-icon">✂️</div>
+        <div class="exp-name">Full AI Edit</div>
+        <div class="exp-desc">Execute all cut/trim decisions + AI color grade — outputs a fully edited MP4</div>
+        <div class="exp-proc-status" id="proc-status-full_edit"></div>
+        <button class="exp-btn exp-btn-red" id="proc-btn-full_edit" onclick="processVideoOp('full_edit')" ${hasEdits?'':'disabled'}>
+          ⚡ Process & Download
+        </button>
+      </div>
+      <div class="exp-card exp-card-process">
+        <div class="exp-icon">📱</div>
+        <div class="exp-name">Export Shorts (9:16)</div>
+        <div class="exp-desc">Trim to best ${hasShortsClip&&d.shorts_clip.best_start?`${d.shorts_clip.best_start}→${d.shorts_clip.best_end}`:'clip'}, vertical crop + color grade</div>
+        <div class="exp-proc-status" id="proc-status-shorts"></div>
+        <button class="exp-btn exp-btn-red" id="proc-btn-shorts" onclick="processVideoOp('shorts')" ${hasShortsClip?'':'disabled'}>
+          ⚡ Process & Download
+        </button>
+      </div>
+      <div class="exp-card exp-card-process">
+        <div class="exp-icon">🎨</div>
+        <div class="exp-name">Color Grade Only</div>
+        <div class="exp-desc">Apply AI color grade (temp ${d.color_grade?.temperature||5500}K · ${d.color_grade?.style||'Cinematic'}) to full video</div>
+        <div class="exp-proc-status" id="proc-status-color_grade"></div>
+        <button class="exp-btn exp-btn-red" id="proc-btn-color_grade" onclick="processVideoOp('color_grade')" ${d.color_grade?'':'disabled'}>
+          ⚡ Process & Download
+        </button>
+      </div>
+    </div>
+
+    <div class="export-section-label" style="margin-top:18px">📦 Export Data & Scripts</div>
     <div class="export-grid">
       <div class="exp-card">
         <div class="exp-icon">💬</div>
@@ -965,6 +1005,79 @@ el.vResetBtn.addEventListener('click', () => {
   el.overviewContent.innerHTML='';
 });
 
+// ── Server-side video processing ────────────────────────────────────────────
+
+const PROC_LABELS = {
+  full_edit: 'AI Edit',
+  shorts: 'Shorts Export',
+  color_grade: 'Color Grade',
+};
+
+async function processVideoOp(operation) {
+  if (!S.videoFile) { toast('No video loaded', 'error'); return; }
+
+  const btn = $(`proc-btn-${operation}`);
+  const statusEl = $(`proc-status-${operation}`);
+  if (!btn || btn.disabled) return;
+
+  // Disable all process buttons during processing
+  ['full_edit','shorts','color_grade'].forEach(op => {
+    const b = $(`proc-btn-${op}`);
+    if (b) { b.disabled = true; b.style.opacity = '0.5'; }
+  });
+
+  const label = PROC_LABELS[operation] || operation;
+  btn.innerHTML = `<div class="tool-spinner" style="width:12px;height:12px;border-color:rgba(255,255,255,.2);border-top-color:white"></div> Processing…`;
+  if (statusEl) statusEl.innerHTML = `<div class="proc-anim">⚙️ Running FFmpeg — this may take a moment…</div>`;
+
+  const fd = new FormData();
+  fd.append('file', S.videoFile);
+  fd.append('operation', operation);
+  fd.append('edit_decisions', JSON.stringify(S.editData?.edit_decisions || []));
+  fd.append('color_grade', JSON.stringify(S.editData?.color_grade || {}));
+  fd.append('shorts_clip', JSON.stringify(S.editData?.shorts_clip || {}));
+
+  try {
+    const startTime = Date.now();
+    const resp = await fetch(`${API}/api/process-video`, {method:'POST', body:fd});
+
+    if (!resp.ok) {
+      const e = await resp.json().catch(()=>({detail:resp.statusText}));
+      if (resp.status === 503) {
+        if (statusEl) statusEl.innerHTML = `<div style="color:var(--amber);font-size:11.5px">⚠️ FFmpeg not installed on server — use the .sh script instead</div>`;
+        toast('FFmpeg not available on server', 'error');
+      } else {
+        throw new Error(e.detail || 'Processing failed');
+      }
+      return;
+    }
+
+    const blob = await resp.blob();
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const sizeKB = (blob.size / 1024).toFixed(0);
+    const sizeMB = blob.size > 1024*1024 ? `${(blob.size/1024/1024).toFixed(1)} MB` : `${sizeKB} KB`;
+
+    // Build filename from original
+    const base = (S.meta?.filename || 'video').replace(/\.[^.]+$/, '');
+    const suffix = {full_edit:'_edited',shorts:'_shorts_9x16',color_grade:'_color_graded'}[operation]||'_processed';
+    dlBlob(blob, `${base}${suffix}.mp4`);
+
+    if (statusEl) statusEl.innerHTML = `<div style="color:var(--green);font-size:11.5px">✓ Done in ${elapsed}s · ${sizeMB}</div>`;
+    toast(`${label} complete! (${sizeMB})`, 'success');
+
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<div style="color:var(--red);font-size:11.5px">✕ ${e.message}</div>`;
+    toast(e.message || 'Processing failed', 'error');
+  } finally {
+    // Re-enable buttons
+    ['full_edit','shorts','color_grade'].forEach(op => {
+      const b = $(`proc-btn-${op}`);
+      if (b) { b.disabled = false; b.style.opacity = ''; }
+    });
+    if (btn) btn.innerHTML = '⚡ Process & Download';
+  }
+}
+
 // ── Global expose ───────────────────────────────────────────────────────────
 window.copyCode = copyCode;
 window.toggleThinking = h => { h.classList.toggle('collapsed'); h.parentElement.querySelector('.thinking-content').classList.toggle('hidden'); };
@@ -974,6 +1087,7 @@ window.downloadEDL = downloadEDL;
 window.downloadFFmpegScript = downloadFFmpegScript;
 window.downloadJSON = downloadJSON;
 window.copyFFmpeg = copyFFmpeg;
+window.processVideoOp = processVideoOp;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();
