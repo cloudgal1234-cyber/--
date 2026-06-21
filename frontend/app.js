@@ -81,6 +81,7 @@ const el = {
   chatSb: $('chat-sidebar'), videoSb: $('video-sidebar'), imgSb: $('img-sidebar'),
   audioSb: $('audio-sidebar'), docSb: $('doc-sidebar'),
   dataSb: $('data-sidebar'), codeSb: $('code-sidebar'), liveSb: $('live-sidebar'),
+  writerSb: $('writer-sidebar'), webSb: $('web-sidebar'), batchSb: $('batch-sidebar'),
   modeBtns: document.querySelectorAll('.mode-btn'),
   frameCount: $('frame-count'), frameCountLabel: $('frame-count-label'),
   sceneThresh: $('scene-thresh'), sceneThreshLabel: $('scene-thresh-label'),
@@ -89,6 +90,7 @@ const el = {
   chatView: $('chat-view'), videoView: $('video-view'), imageView: $('image-view'),
   audioView: $('audio-view'), documentView: $('document-view'),
   dataView: $('data-view'), codeView: $('code-view'), liveView: $('live-view'),
+  writerView: $('writer-view'), webView: $('web-view'), batchView: $('batch-view'),
   // Video upload
   vUpload: $('v-upload'), vDrop: $('v-drop'),
   vPickBtn: $('v-pick-btn'), vFileInput: $('v-file-input'),
@@ -149,6 +151,9 @@ el.modeBtns.forEach(btn => btn.addEventListener('click', () => {
   el.dataView.classList.toggle('hidden', mode !== 'data');
   el.codeView.classList.toggle('hidden', mode !== 'code');
   el.liveView.classList.toggle('hidden', mode !== 'live');
+  el.writerView.classList.toggle('hidden', mode !== 'writer');
+  el.webView.classList.toggle('hidden', mode !== 'web');
+  el.batchView.classList.toggle('hidden', mode !== 'batch');
   el.chatSb.classList.toggle('hidden', mode !== 'chat');
   el.videoSb.classList.toggle('hidden', mode !== 'video');
   el.imgSb.classList.toggle('hidden', mode !== 'image');
@@ -157,6 +162,9 @@ el.modeBtns.forEach(btn => btn.addEventListener('click', () => {
   el.dataSb.classList.toggle('hidden', mode !== 'data');
   el.codeSb.classList.toggle('hidden', mode !== 'code');
   el.liveSb.classList.toggle('hidden', mode !== 'live');
+  el.writerSb.classList.toggle('hidden', mode !== 'writer');
+  el.webSb.classList.toggle('hidden', mode !== 'web');
+  el.batchSb.classList.toggle('hidden', mode !== 'batch');
 }));
 
 // ── Sliders ────────────────────────────────────────────────────────────────
@@ -3717,6 +3725,481 @@ window.runImageCompare = async function() {
   };
 
 })(); // end initImageStudio
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI WRITER STUDIO
+// ══════════════════════════════════════════════════════════════════════════════
+(function initWriterStudio() {
+  const generateBtn = $('writer-generate-btn');
+  const clearBtn    = $('writer-clear-btn');
+  const copyBtn     = $('writer-copy-btn');
+  const outputEl    = $('writer-output');
+  const statsEl     = $('writer-stats');
+  const labelEl     = $('writer-output-label');
+  if (!generateBtn) return;
+
+  let writerStreaming = false;
+  let writerText = '';
+
+  function updateStats(text) {
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    const readMins = Math.max(1, Math.round(words / 200));
+    statsEl.textContent = `${words.toLocaleString()} words · ${readMins} min read`;
+    statsEl.classList.remove('hidden');
+  }
+
+  async function generateContent() {
+    const topic = $('writer-topic')?.value.trim();
+    if (!topic) { toast('Please enter a topic or brief', 'error'); return; }
+    if (writerStreaming) return;
+    writerStreaming = true;
+    writerText = '';
+    outputEl.innerHTML = '<div class="writer-generating"><div class="tool-spinner"></div><span>Generating…</span></div>';
+    labelEl.textContent = '📄 Generating…';
+    statsEl.classList.add('hidden');
+    generateBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('topic', topic);
+    fd.append('template', $('writer-template')?.value || 'blog_post');
+    fd.append('tone', $('writer-tone')?.value || 'professional');
+    fd.append('length', $('writer-length')?.value || 'medium');
+    fd.append('language', $('writer-language')?.value || 'English');
+    fd.append('extra', $('writer-extra')?.value || '');
+    fd.append('model', $('writer-model')?.value || 'claude-opus-4-8');
+
+    try {
+      const resp = await fetch(`${API}/api/generate-content`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      outputEl.innerHTML = '';
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'text' && evt.text) {
+              writerText += evt.text;
+              outputEl.innerHTML = md(writerText);
+              hljs.highlightAll();
+            } else if (evt.type === 'done') {
+              updateStats(writerText);
+              labelEl.textContent = '📄 Output';
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch(e) {
+      outputEl.innerHTML = `<div style="color:var(--error);padding:16px">⚠ ${esc(e.message)}</div>`;
+      labelEl.textContent = '📄 Output';
+    } finally {
+      writerStreaming = false;
+      generateBtn.disabled = false;
+    }
+  }
+
+  generateBtn.addEventListener('click', generateContent);
+  clearBtn.addEventListener('click', () => {
+    $('writer-topic').value = '';
+    $('writer-extra').value = '';
+    writerText = '';
+    outputEl.innerHTML = `<div class="writer-placeholder"><div style="font-size:32px">✍️</div><div style="font-size:14px;color:var(--text3);margin-top:8px">Your generated content will appear here</div><div style="font-size:12px;color:var(--text3);margin-top:4px">Choose a template, write your brief, and click Generate</div></div>`;
+    statsEl.classList.add('hidden');
+    labelEl.textContent = '📄 Output';
+  });
+  copyBtn.addEventListener('click', () => { if (writerText) navigator.clipboard.writeText(writerText).then(()=>toast('Copied!')); });
+
+  window.copyWriterOutput = function() {
+    if (!writerText) { toast('Nothing to copy yet', 'error'); return; }
+    navigator.clipboard.writeText(writerText).then(() => toast('Copied!'));
+  };
+
+  window.downloadWriterOutput = function() {
+    if (!writerText) { toast('Nothing to download yet', 'error'); return; }
+    const tmpl = $('writer-template')?.value || 'content';
+    const blob = new Blob([writerText], {type:'text/plain'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `${tmpl}-${Date.now()}.md`; a.click();
+  };
+
+  window.improveWriterOutput = async function() {
+    if (!writerText || writerStreaming) { toast('Generate content first', 'error'); return; }
+    writerStreaming = true;
+    const orig = writerText;
+    writerText = '';
+    outputEl.innerHTML = '<div class="writer-generating"><div class="tool-spinner"></div><span>Improving…</span></div>';
+    labelEl.textContent = '✨ Improving…';
+    generateBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('topic', `IMPROVE THIS CONTENT (make it more engaging, clearer, better structured):\n\n${orig}`);
+    fd.append('template', $('writer-template')?.value || 'blog_post');
+    fd.append('tone', $('writer-tone')?.value || 'professional');
+    fd.append('length', $('writer-length')?.value || 'medium');
+    fd.append('language', $('writer-language')?.value || 'English');
+    fd.append('extra', 'Return ONLY the improved version, no commentary.');
+    fd.append('model', $('writer-model')?.value || 'claude-opus-4-8');
+
+    try {
+      const resp = await fetch(`${API}/api/generate-content`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder(); let buf = '';
+      outputEl.innerHTML = '';
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'text') { writerText += evt.text; outputEl.innerHTML = md(writerText); hljs.highlightAll(); }
+            else if (evt.type === 'done') { updateStats(writerText); labelEl.textContent = '📄 Output'; }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch(e) {
+      writerText = orig;
+      outputEl.innerHTML = md(orig);
+      toast('Improvement failed: ' + e.message, 'error');
+      labelEl.textContent = '📄 Output';
+    } finally {
+      writerStreaming = false;
+      generateBtn.disabled = false;
+    }
+  };
+})(); // end initWriterStudio
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WEB IQ ANALYZER
+// ══════════════════════════════════════════════════════════════════════════════
+(function initWebIQ() {
+  const analyzeBtn   = $('web-analyze-btn');
+  const urlInput     = $('web-url-input');
+  const processing   = $('web-processing');
+  const suggestions  = $('web-suggestions');
+  const resultsWrap  = $('web-results');
+  if (!analyzeBtn) return;
+
+  let webStreaming = false;
+  let webText = '';
+
+  function showProcessing(sub) {
+    suggestions.classList.add('hidden');
+    resultsWrap.classList.add('hidden');
+    processing.classList.remove('hidden');
+    const s = processing.querySelector('.proc-sub');
+    if (s) s.textContent = sub || 'Fetching page content…';
+  }
+
+  function renderWebAnalysis(data) {
+    processing.classList.add('hidden');
+    resultsWrap.classList.remove('hidden');
+
+    $('web-result-title').textContent  = data.title || data.page_title || 'Untitled';
+    $('web-result-url').textContent    = data.url || '';
+    $('web-tldr').textContent          = data.tldr || data.summary?.one_line || '';
+
+    const chips = $('web-result-chips');
+    const topics = data.topics || [];
+    const typeChip = data.type ? [data.type.replace(/_/g,' ')] : [];
+    chips.innerHTML = [...typeChip, ...topics].slice(0,6).map(t => `<span class="doc-meta-chip">${esc(t)}</span>`).join('');
+
+    const fill = (id, content) => {
+      const el = $(id);
+      if (!el) return;
+      if (Array.isArray(content)) {
+        el.innerHTML = md(content.map(c => typeof c === 'object' ? `- **${esc(c.claim||'')}** — ${esc(c.context||'')}` : `- ${esc(String(c))}`).join('\n'));
+      } else if (typeof content === 'object' && content !== null) {
+        el.innerHTML = md(Object.entries(content).map(([k,v]) => `**${esc(k)}:** ${Array.isArray(v) ? v.join(', ') : esc(String(v))}`).join('\n\n'));
+      } else {
+        el.innerHTML = md(String(content || ''));
+      }
+      hljs.highlightAll();
+    };
+
+    fill('web-exec',   data.summary?.executive || data.summary || '');
+    fill('web-points', data.summary?.key_points || []);
+    fill('web-quotes', data.quotes || []);
+    fill('web-data',   data.data_points || []);
+
+    const cred = data.credibility_signals;
+    if (cred) {
+      const scoreHtml = `**Credibility score: ${cred.score||'?'}/10** · Bias: ${data.bias_assessment||'unknown'} · Sentiment: ${data.sentiment||'?'}\n\n**Positives:**\n${(cred.positives||[]).map(x=>`- ${x}`).join('\n')}\n\n**Concerns:**\n${(cred.negatives||[]).map(x=>`- ${x}`).join('\n')}`;
+      $('web-credibility').innerHTML = md(scoreHtml);
+    } else {
+      fill('web-credibility', data.bias_assessment || '');
+    }
+
+    const ent = data.key_entities || {};
+    const entLines = Object.entries(ent).filter(([,v])=>Array.isArray(v)&&v.length).map(([k,v]) => `**${esc(k)}:** ${v.map(e=>esc(e)).join(', ')}`);
+    $('web-entities').innerHTML = md(entLines.join('\n\n') || '—');
+
+    fill('web-questions', data.related_questions || []);
+
+    const kwEl = $('web-keywords');
+    kwEl.innerHTML = (data.keywords || []).map(k => `<span class="img-tag">${esc(k)}</span>`).join('');
+  }
+
+  window.analyzeUrl = async function() {
+    const url = urlInput?.value.trim();
+    if (!url) { toast('Please enter a URL', 'error'); return; }
+    if (webStreaming) return;
+    webStreaming = true;
+    webText = '';
+    showProcessing('Fetching page content…');
+    analyzeBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('url', url);
+    fd.append('model', $('web-model-select')?.value || 'claude-opus-4-8');
+
+    try {
+      const resp = await fetch(`${API}/api/analyze-url`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder(); let buf = '';
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'chunk') {
+              webText += evt.text || '';
+              const s = processing.querySelector('.proc-sub');
+              if (s) s.textContent = 'Analyzing content…';
+            } else if (evt.type === 'result') {
+              renderWebAnalysis({...evt.data, url: evt.url || url, title: evt.page_title || evt.data?.title});
+            } else if (evt.type === 'parse_error') {
+              toast('Could not parse analysis — site may block scraping', 'error');
+              processing.classList.add('hidden');
+              suggestions.classList.remove('hidden');
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch(e) {
+      processing.classList.add('hidden');
+      suggestions.classList.remove('hidden');
+      toast('Analysis failed: ' + e.message, 'error');
+    } finally {
+      webStreaming = false;
+      analyzeBtn.disabled = false;
+    }
+  };
+})(); // end initWebIQ
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BATCH IMAGE PROCESSOR
+// ══════════════════════════════════════════════════════════════════════════════
+(function initBatchStudio() {
+  const pickBtn    = $('batch-pick-btn');
+  const fileInput  = $('batch-file-input');
+  const dropZone   = $('batch-drop');
+  const runBtn     = $('batch-run-btn');
+  const previewEl  = $('batch-preview-grid');
+  const countEl    = $('batch-count');
+  const progWrap   = $('batch-progress-bar-wrap');
+  const progBar    = $('batch-prog-bar');
+  const progText   = $('batch-progress-text');
+  const resultsWrap= $('batch-results-wrap');
+  const resultsGrid= $('batch-results-grid');
+  const countLbl   = $('batch-results-count');
+  if (!pickBtn) return;
+
+  let batchFiles  = [];
+  let batchResults = [];
+  let batchRunning = false;
+
+  function updatePreview() {
+    countEl.textContent = batchFiles.length;
+    runBtn.classList.toggle('hidden', batchFiles.length === 0);
+    previewEl.innerHTML = batchFiles.map((f, i) => {
+      const url = URL.createObjectURL(f);
+      return `<div class="batch-thumb" data-index="${i}">
+        <img src="${url}" alt="${esc(f.name)}" loading="lazy"/>
+        <div class="batch-thumb-name">${esc(f.name)}</div>
+        <button class="batch-thumb-remove" onclick="removeBatchFile(${i})">×</button>
+      </div>`;
+    }).join('');
+  }
+
+  window.removeBatchFile = function(i) {
+    batchFiles.splice(i, 1);
+    updatePreview();
+  };
+
+  function addFiles(files) {
+    const imgs = Array.from(files).filter(f => f.type.startsWith('image/'));
+    const remaining = 20 - batchFiles.length;
+    if (remaining <= 0) { toast('Maximum 20 images reached', 'error'); return; }
+    batchFiles = [...batchFiles, ...imgs.slice(0, remaining)];
+    if (imgs.length > remaining) toast(`Only ${remaining} more images allowed (max 20)`, 'info');
+    updatePreview();
+  }
+
+  pickBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    addFiles(e.dataTransfer.files);
+  });
+
+  window.runBatch = async function() {
+    if (batchFiles.length === 0) { toast('Add images first', 'error'); return; }
+    if (batchRunning) return;
+    batchRunning = true;
+    batchResults = [];
+    runBtn.disabled = true;
+    progWrap.classList.remove('hidden');
+    resultsWrap.classList.add('hidden');
+    progBar.style.width = '0%';
+    progText.textContent = `Uploading ${batchFiles.length} images…`;
+
+    const fd = new FormData();
+    batchFiles.forEach(f => fd.append('files', f));
+    fd.append('model', $('batch-model-select')?.value || 'claude-sonnet-4-6');
+    fd.append('prompt', $('batch-prompt-input')?.value || 'Analyze this image in detail.');
+
+    try {
+      const resp = await fetch(`${API}/api/batch-analyze-images`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder(); let buf = '';
+      let done_count = 0;
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'item') {
+              const r = evt.result;
+              done_count++;
+              const pct = Math.round((done_count / batchFiles.length) * 100);
+              progBar.style.width = pct + '%';
+              progText.textContent = `Analyzed ${done_count} / ${batchFiles.length}`;
+              if (r.status === 'ok' && r.data) {
+                batchResults.push({
+                  index: r.index,
+                  analysis: r.data.description || '',
+                  tags: r.data.tags || [],
+                  data: r.data,
+                });
+              } else {
+                batchResults.push({
+                  index: r.index,
+                  analysis: `⚠ Error: ${r.error || 'unknown'}`,
+                  tags: [],
+                });
+              }
+            } else if (evt.type === 'done') {
+              renderBatchResults();
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch(e) {
+      toast('Batch failed: ' + e.message, 'error');
+    } finally {
+      batchRunning = false;
+      runBtn.disabled = false;
+      progWrap.classList.add('hidden');
+    }
+  };
+
+  function renderBatchResults() {
+    if (batchResults.length === 0) return;
+    const sorted = [...batchResults].sort((a,b) => a.index - b.index);
+    countLbl.textContent = `✅ ${sorted.length} images analyzed`;
+    resultsGrid.innerHTML = sorted.map(r => {
+      const file = batchFiles[r.index];
+      const imgUrl = file ? URL.createObjectURL(file) : '';
+      const tags = (r.tags || []).map(t => `<span class="img-tag img-tag-sm">${esc(t)}</span>`).join('');
+      const d = r.data || {};
+      const extras = d.mood ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">Mood: ${esc(d.mood)} · Scene: ${esc(d.scene||'')} · Score: ${d.quality_score||'?'}/10</div>` : '';
+      return `<div class="batch-result-card">
+        ${imgUrl ? `<img src="${imgUrl}" class="batch-result-img" alt=""/>` : ''}
+        <div class="batch-result-body">
+          <div class="batch-result-name">${esc(file?.name || 'Image ' + (r.index+1))}</div>
+          <div class="batch-result-text">${md(r.analysis || '')}</div>
+          ${extras}
+          ${tags ? `<div class="img-tag-list" style="margin-top:6px">${tags}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    resultsWrap.classList.remove('hidden');
+    resultsWrap.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  window.exportBatchJSON = function() {
+    if (batchResults.length === 0) { toast('Run batch analysis first', 'error'); return; }
+    const data = batchResults.sort((a,b)=>a.index-b.index).map(r => ({
+      index: r.index,
+      filename: batchFiles[r.index]?.name || '',
+      analysis: r.analysis,
+      tags: r.tags || []
+    }));
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `batch-results-${Date.now()}.json`; a.click();
+  };
+
+  window.exportBatchCSV = function() {
+    if (batchResults.length === 0) { toast('Run batch analysis first', 'error'); return; }
+    const sorted = batchResults.sort((a,b)=>a.index-b.index);
+    const header = 'index,filename,analysis,tags';
+    const rows = sorted.map(r => [
+      r.index,
+      `"${(batchFiles[r.index]?.name||'').replace(/"/g,'""')}"`,
+      `"${(r.analysis||'').replace(/"/g,'""')}"`,
+      `"${(r.tags||[]).join(', ').replace(/"/g,'""')}"`
+    ].join(','));
+    const blob = new Blob([[header, ...rows].join('\n')], {type:'text/csv'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `batch-results-${Date.now()}.csv`; a.click();
+  };
+
+  window.clearBatch = function() {
+    batchFiles = []; batchResults = [];
+    updatePreview();
+    resultsWrap.classList.add('hidden');
+    progWrap.classList.add('hidden');
+    toast('Cleared');
+  };
+})(); // end initBatchStudio
 
 // ── Global expose ───────────────────────────────────────────────────────────
 window.copyCode = copyCode;

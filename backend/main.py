@@ -3,6 +3,10 @@ import io
 import json
 import re
 import math
+import asyncio
+import urllib.request
+import urllib.error
+import html as html_module
 import struct
 import base64
 import tempfile
@@ -2242,6 +2246,273 @@ async def code_chat(
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
     return StreamingResponse(_stream(), media_type="text/event-stream",
         headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI WRITER STUDIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+WRITER_TEMPLATES = {
+    "blog_post": "Write a comprehensive, engaging blog post",
+    "email": "Write a professional email",
+    "tweet_thread": "Write a compelling Twitter/X thread (10-15 tweets, number each)",
+    "linkedin": "Write an engaging LinkedIn post with hooks and value",
+    "youtube_desc": "Write a YouTube video description with timestamps, hashtags, and CTAs",
+    "product_desc": "Write a persuasive product description for e-commerce",
+    "cover_letter": "Write a tailored cover letter",
+    "press_release": "Write a professional press release in AP style",
+    "cold_email": "Write a cold outreach email with a compelling hook and clear CTA",
+    "script": "Write a video/podcast script with clear sections",
+    "story": "Write a short story or creative fiction",
+    "ad_copy": "Write high-converting advertising copy (headline, subheadline, body, CTA)",
+}
+
+TONES = {
+    "professional": "formal, authoritative, trustworthy",
+    "casual": "friendly, conversational, approachable",
+    "persuasive": "compelling, urgent, action-driving",
+    "academic": "scholarly, precise, evidence-based",
+    "creative": "imaginative, vivid, distinctive voice",
+    "empathetic": "warm, understanding, supportive",
+    "humorous": "witty, light-hearted, entertaining",
+}
+
+
+@app.post("/api/generate-content")
+async def generate_content(
+    template: str = Form("blog_post"),
+    topic: str = Form(...),
+    tone: str = Form("professional"),
+    length: str = Form("medium"),
+    language: str = Form("English"),
+    extra: str = Form(""),
+    model: str = Form("claude-opus-4-8"),
+):
+    tmpl_desc = WRITER_TEMPLATES.get(template, "Write content about")
+    tone_desc = TONES.get(tone, tone)
+    length_guide = {"short": "300-500 words", "medium": "600-900 words", "long": "1200-1800 words", "ultra": "2500+ words"}.get(length, "600-900 words")
+
+    prompt = f"""{tmpl_desc} about the following topic.
+
+Topic / Brief: {topic}
+
+Requirements:
+- Tone: {tone_desc}
+- Length: {length_guide}
+- Language: {language}
+- Format: Use proper markdown (headings, bold, lists) where appropriate
+{('- Additional instructions: ' + extra) if extra else ''}
+
+Write the complete content now, ready to publish. No preamble, no "here is the content" — start directly."""
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=4000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": prompt}],
+            ) as s:
+                for ev in s:
+                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEB ANALYZER
+# ══════════════════════════════════════════════════════════════════════════════
+
+WEB_ANALYSIS_PROMPT = """Analyze this web page content and return ONLY this JSON (no markdown fences):
+
+{
+  "title": "Page title",
+  "type": "news_article|blog_post|product_page|documentation|research|social|forum|other",
+  "author": "Author name or 'Unknown'",
+  "published_date": "Date or 'Unknown'",
+  "reading_time_minutes": 3,
+  "summary": {
+    "one_line": "Single sentence summary",
+    "executive": "3-5 sentence detailed summary",
+    "key_points": ["Point 1", "Point 2", "Point 3", "Point 4", "Point 5"]
+  },
+  "sentiment": "positive|negative|neutral|mixed",
+  "bias_assessment": "left|center-left|center|center-right|right|unknown|not_applicable",
+  "credibility_signals": {
+    "score": 8,
+    "positives": ["Has citations", "Named author with credentials"],
+    "negatives": ["No date", "Sensational headline"]
+  },
+  "key_entities": {
+    "people": [],
+    "organizations": [],
+    "locations": [],
+    "products": [],
+    "events": []
+  },
+  "claims": [
+    {"claim": "Specific factual claim", "verifiable": true, "context": "supporting context"}
+  ],
+  "quotes": ["Notable direct quote"],
+  "data_points": ["Specific statistic or data mentioned"],
+  "topics": ["main topic", "secondary topic"],
+  "keywords": ["kw1", "kw2", "kw3", "kw4", "kw5", "kw6"],
+  "related_questions": ["What question does this raise?", "What's the other side?"],
+  "action_items": ["If applicable: what should the reader do?"],
+  "tldr": "One punchy sentence under 20 words"
+}"""
+
+
+def fetch_url_content(url: str, timeout: int = 10) -> tuple[str, str]:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            charset = "utf-8"
+            ct = resp.headers.get("Content-Type", "")
+            if "charset=" in ct:
+                charset = ct.split("charset=")[-1].split(";")[0].strip()
+            html = raw.decode(charset, errors="replace")
+    except Exception as e:
+        raise ValueError(f"Could not fetch URL: {e}")
+
+    # Strip tags
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_module.unescape(text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+
+    # Try to get title
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    title = html_module.unescape(title_m.group(1).strip()) if title_m else "Unknown"
+    return text[:12000], title
+
+
+@app.post("/api/analyze-url")
+async def analyze_url(
+    url: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    try:
+        content, title = await asyncio.get_event_loop().run_in_executor(None, fetch_url_content, url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    prompt = f"URL: {url}\nPage title: {title}\n\nPage content:\n{content}\n\n{WEB_ANALYSIS_PROMPT}"
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=4000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": prompt}],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type':'result','data':parsed,'url':url,'page_title':title})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BATCH IMAGE PROCESSOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+BATCH_IMAGE_PROMPT = """Analyze this image and return ONLY this compact JSON:
+{
+  "description": "One concise sentence",
+  "objects": ["obj1","obj2","obj3"],
+  "dominant_colors": ["#hex1","#hex2","#hex3"],
+  "mood": "mood word",
+  "quality_score": 8,
+  "tags": ["tag1","tag2","tag3","tag4","tag5"],
+  "text_in_image": "any visible text or empty string",
+  "faces_count": 0,
+  "scene": "indoor|outdoor|studio|unknown",
+  "best_use": "social_media|print|editorial|commercial|portfolio",
+  "improvements": ["one key improvement"]
+}"""
+
+
+@app.post("/api/batch-analyze-images")
+async def batch_analyze_images(
+    files: List[UploadFile] = File(...),
+    model: str = Form("claude-sonnet-4-6"),
+):
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="Max 20 images per batch")
+
+    async def analyze_one(f: UploadFile, idx: int):
+        content = await f.read()
+        media_type = f.content_type or "image/jpeg"
+        img_data = base64.standard_b64encode(content).decode("utf-8")
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=600,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
+                    {"type": "text", "text": BATCH_IMAGE_PROMPT},
+                ]}],
+            )
+            raw = resp.content[0].text
+            clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
+            parsed = json.loads(clean)
+            parsed["filename"] = f.filename or f"image_{idx+1}"
+            parsed["size_kb"] = round(len(content) / 1024, 1)
+            return {"index": idx, "status": "ok", "data": parsed}
+        except Exception as e:
+            return {"index": idx, "status": "error", "filename": f.filename or f"image_{idx+1}", "error": str(e)}
+
+    tasks = [analyze_one(f, i) for i, f in enumerate(files)]
+    results = await asyncio.gather(*tasks)
+
+    async def _stream():
+        for r in sorted(results, key=lambda x: x["index"]):
+            yield f"data: {json.dumps({'type':'item','result':r})}\n\n"
+        yield f"data: {json.dumps({'type':'done','total':len(results)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")

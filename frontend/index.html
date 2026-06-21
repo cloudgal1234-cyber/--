@@ -64,6 +64,18 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
         Live Vision
       </button>
+      <button class="mode-btn" data-mode="writer">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        AI Writer
+      </button>
+      <button class="mode-btn" data-mode="web">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Web IQ
+      </button>
+      <button class="mode-btn" data-mode="batch">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Batch
+      </button>
     </div>
 
     <div class="sb-section" id="chat-sidebar">
@@ -168,6 +180,98 @@
         <div class="cap-badge">🌍 Language Detection</div>
         <div class="cap-badge">📋 Chapter Markers</div>
         <div class="cap-badge">🎭 Sentiment Arc</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="writer-sidebar">
+      <div class="sb-label">Template</div>
+      <select id="writer-template" class="model-select">
+        <option value="blog_post">📝 Blog Post</option>
+        <option value="email">📧 Email</option>
+        <option value="tweet_thread">🐦 Tweet Thread</option>
+        <option value="linkedin">💼 LinkedIn Post</option>
+        <option value="youtube_desc">▶️ YouTube Description</option>
+        <option value="product_desc">🛍 Product Description</option>
+        <option value="cover_letter">📄 Cover Letter</option>
+        <option value="press_release">📰 Press Release</option>
+        <option value="cold_email">📩 Cold Email</option>
+        <option value="script">🎬 Script</option>
+        <option value="story">✍️ Story / Fiction</option>
+        <option value="ad_copy">📢 Ad Copy</option>
+      </select>
+      <div class="sb-label" style="margin-top:10px">Tone</div>
+      <select id="writer-tone" class="model-select">
+        <option value="professional">Professional</option>
+        <option value="casual">Casual &amp; Friendly</option>
+        <option value="persuasive">Persuasive</option>
+        <option value="academic">Academic</option>
+        <option value="creative">Creative</option>
+        <option value="empathetic">Empathetic</option>
+        <option value="humorous">Humorous</option>
+      </select>
+      <div class="sb-label" style="margin-top:10px">Length</div>
+      <select id="writer-length" class="model-select">
+        <option value="short">Short (300-500w)</option>
+        <option value="medium" selected>Medium (600-900w)</option>
+        <option value="long">Long (1200-1800w)</option>
+        <option value="ultra">Ultra (2500w+)</option>
+      </select>
+      <div class="sb-label" style="margin-top:10px">Language</div>
+      <select id="writer-language" class="model-select">
+        <option value="English">English</option>
+        <option value="Hebrew">עברית</option>
+        <option value="Spanish">Español</option>
+        <option value="French">Français</option>
+        <option value="German">Deutsch</option>
+        <option value="Arabic">العربية</option>
+        <option value="Portuguese">Português</option>
+        <option value="Russian">Русский</option>
+        <option value="Japanese">日本語</option>
+        <option value="Chinese">中文</option>
+      </select>
+      <div class="sb-label" style="margin-top:10px">Model</div>
+      <select id="writer-model" class="model-select">
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Best)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-fable-5">Fable 5 ✦✦</option>
+      </select>
+    </div>
+
+    <div class="sb-section hidden" id="web-sidebar">
+      <div class="sb-label">Analysis Model</div>
+      <select id="web-model-select" class="model-select">
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Best)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-fable-5">Fable 5 ✦✦</option>
+      </select>
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">📝 Deep Summary</div>
+        <div class="cap-badge">⚖️ Bias Detection</div>
+        <div class="cap-badge">✅ Credibility Score</div>
+        <div class="cap-badge">🏢 Entity Extraction</div>
+        <div class="cap-badge">📊 Data Points</div>
+        <div class="cap-badge">💬 Key Quotes</div>
+        <div class="cap-badge">❓ Related Questions</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="batch-sidebar">
+      <div class="sb-label">Analysis Model</div>
+      <select id="batch-model-select" class="model-select">
+        <option value="claude-sonnet-4-6">Sonnet 4.6 ⚡ (Fast)</option>
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Detailed)</option>
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5 ⚡⚡</option>
+      </select>
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">⚡ Parallel Processing</div>
+        <div class="cap-badge">📊 Batch Statistics</div>
+        <div class="cap-badge">🏷 Auto-Tagging</div>
+        <div class="cap-badge">⭐ Quality Ranking</div>
+        <div class="cap-badge">🎨 Color Extraction</div>
+        <div class="cap-badge">📥 Export JSON/CSV</div>
+        <div class="cap-badge">🔍 Smart Filtering</div>
       </div>
     </div>
 
@@ -467,6 +571,167 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ════════ AI WRITER STUDIO ════════ -->
+    <div id="writer-view" class="hidden">
+      <div class="writer-layout">
+        <div class="writer-input-col">
+          <div class="writer-prompt-wrap">
+            <div class="img-card-title" style="padding:0 0 8px;font-size:13px">✍️ Topic / Brief</div>
+            <textarea id="writer-topic" class="writer-textarea" placeholder="Describe what you want to write about. Be specific: target audience, key points to cover, call-to-action, any specific details to include…" rows="6"></textarea>
+            <div class="sb-label" style="margin-top:10px">Extra instructions (optional)</div>
+            <input type="text" id="writer-extra" class="edit-instructions-input" placeholder="e.g. include 3 real examples, avoid jargon, mention our product CTA"/>
+            <div class="writer-actions">
+              <button class="action-btn action-primary" id="writer-generate-btn" style="flex:1">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Generate
+              </button>
+              <button class="action-btn action-ghost" id="writer-clear-btn">Clear</button>
+              <button class="action-btn action-ghost" id="writer-copy-btn">Copy</button>
+            </div>
+          </div>
+          <!-- Word count + reading time -->
+          <div id="writer-stats" class="writer-stats hidden"></div>
+        </div>
+        <div class="writer-output-col">
+          <div class="writer-output-header">
+            <span id="writer-output-label" class="img-card-title" style="font-size:13px">📄 Output</span>
+            <div style="display:flex;gap:6px">
+              <button class="field-copy-btn" onclick="copyWriterOutput()">Copy</button>
+              <button class="field-copy-btn" onclick="downloadWriterOutput()">Download</button>
+              <button class="field-copy-btn" onclick="improveWriterOutput()">✨ Improve</button>
+            </div>
+          </div>
+          <div id="writer-output" class="writer-output">
+            <div class="writer-placeholder">
+              <div style="font-size:32px">✍️</div>
+              <div style="font-size:14px;color:var(--text3);margin-top:8px">Your generated content will appear here</div>
+              <div style="font-size:12px;color:var(--text3);margin-top:4px">Choose a template, write your brief, and click Generate</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════ WEB ANALYZER ════════ -->
+    <div id="web-view" class="hidden">
+      <div class="web-layout">
+        <div class="web-url-bar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <input type="url" id="web-url-input" class="web-url-input" placeholder="Paste any URL to analyze — news article, blog post, product page, research paper…" onkeydown="if(event.key==='Enter')analyzeUrl()"/>
+          <button class="action-btn action-primary" id="web-analyze-btn" onclick="analyzeUrl()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Analyze
+          </button>
+        </div>
+
+        <!-- Quick suggestions -->
+        <div class="web-suggestions" id="web-suggestions">
+          <div class="web-sug-label">Try analyzing:</div>
+          <div class="web-sug-chips">
+            <button class="web-sug-chip" onclick="$('web-url-input').value='https://techcrunch.com';analyzeUrl()">TechCrunch</button>
+            <button class="web-sug-chip" onclick="$('web-url-input').value='https://news.ycombinator.com';analyzeUrl()">Hacker News</button>
+            <button class="web-sug-chip" onclick="$('web-url-input').value='https://arxiv.org/abs/2312.11805';analyzeUrl()">arXiv Paper</button>
+          </div>
+        </div>
+
+        <div id="web-processing" class="img-processing hidden" style="min-height:200px">
+          <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Fetching &amp; Analyzing…</div><div class="proc-sub">Fetching page content</div></div></div>
+        </div>
+
+        <div id="web-results" class="web-results hidden">
+          <div class="web-hero">
+            <div id="web-result-title" class="web-result-title"></div>
+            <div id="web-result-url" class="web-result-url"></div>
+            <div id="web-result-chips" class="doc-meta-chips" style="margin:8px 0"></div>
+            <div id="web-tldr" class="web-tldr"></div>
+          </div>
+          <div class="web-workspace">
+            <div class="web-left-col">
+              <div class="img-card">
+                <div class="img-card-title">📋 Summary</div>
+                <div id="web-exec" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">• Key Points</div>
+                <div id="web-points" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">💬 Notable Quotes</div>
+                <div id="web-quotes" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">📊 Data Points &amp; Stats</div>
+                <div id="web-data" class="img-card-body"></div>
+              </div>
+            </div>
+            <div class="web-right-col">
+              <div class="img-card">
+                <div class="img-card-title">⚖️ Bias &amp; Credibility</div>
+                <div id="web-credibility" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">🏢 Key Entities</div>
+                <div id="web-entities" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">❓ Related Questions</div>
+                <div id="web-questions" class="img-card-body"></div>
+              </div>
+              <div class="img-card">
+                <div class="img-card-title">🏷 Topics &amp; Keywords</div>
+                <div id="web-keywords" class="img-tags-wrap" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════ BATCH IMAGE PROCESSOR ════════ -->
+    <div id="batch-view" class="hidden">
+      <div class="batch-layout">
+        <div class="batch-drop-zone" id="batch-drop">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="url(#bg)" stroke-width="1.3">
+            <defs><linearGradient id="bg" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#ec4899"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs>
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+          </svg>
+          <div>
+            <div style="font-size:16px;font-weight:700;color:var(--text)">Drop up to 20 images</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:4px">All analyzed in parallel — JPG · PNG · WEBP · GIF</div>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="upload-btn" id="batch-pick-btn">Choose Images</button>
+            <button class="action-btn action-ghost hidden" id="batch-run-btn" onclick="runBatch()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              Analyze All (<span id="batch-count">0</span>)
+            </button>
+          </div>
+          <input type="file" id="batch-file-input" accept="image/*" multiple hidden/>
+        </div>
+
+        <div id="batch-progress-bar-wrap" class="batch-progress-wrap hidden">
+          <div class="prog-wrap"><div id="batch-prog-bar" class="prog-bar" style="width:0%"></div></div>
+          <div id="batch-progress-text" style="font-size:12px;color:var(--text3);text-align:center;margin-top:6px">Analyzing…</div>
+        </div>
+
+        <!-- Preview grid -->
+        <div id="batch-preview-grid" class="batch-preview-grid"></div>
+
+        <!-- Results -->
+        <div id="batch-results-wrap" class="hidden">
+          <div class="batch-results-header">
+            <span id="batch-results-count" class="img-card-title" style="font-size:14px"></span>
+            <div style="display:flex;gap:8px">
+              <button class="field-copy-btn" onclick="exportBatchJSON()">Export JSON</button>
+              <button class="field-copy-btn" onclick="exportBatchCSV()">Export CSV</button>
+              <button class="action-btn action-ghost" id="batch-clear-btn" onclick="clearBatch()">Clear All</button>
+            </div>
+          </div>
+          <div id="batch-results-grid" class="batch-results-grid"></div>
+        </div>
       </div>
     </div>
 
