@@ -734,7 +734,32 @@ function renderEditResults(d) {
   if (d.edit_decisions?.length) {
     const keeps = d.edit_decisions.filter(c => c.action !== 'CUT').length;
     const cuts = d.edit_decisions.filter(c => c.action === 'CUT').length;
+    const hasSilenceData = S.audioWaveform.length > 0;
     el.tabCuts.innerHTML = `
+      ${hasSilenceData ? `
+      <div class="silence-detector" id="silence-detector">
+        <div class="silence-det-header">
+          <span class="silence-det-title">🎙 Silence Remover</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <label style="font-size:11.5px;color:var(--text2);display:flex;align-items:center;gap:5px">
+              Threshold
+              <input type="range" id="sil-thresh" min="2" max="25" value="6" style="width:70px;accent-color:var(--accent)" oninput="this.nextElementSibling.textContent=this.value+'%'"/>
+              <span style="font-size:11px;color:var(--text3);min-width:26px">6%</span>
+            </label>
+            <label style="font-size:11.5px;color:var(--text2);display:flex;align-items:center;gap:5px">
+              Min dur
+              <input type="range" id="sil-min" min="3" max="30" value="8" style="width:60px;accent-color:var(--accent)" oninput="this.nextElementSibling.textContent=(this.value/10).toFixed(1)+'s'"/>
+              <span style="font-size:11px;color:var(--text3);min-width:28px">0.8s</span>
+            </label>
+            <button class="ff-copy" onclick="runSilenceDetect()">🔍 Detect</button>
+          </div>
+        </div>
+        <div id="silence-list" class="silence-list"></div>
+        <div id="silence-actions" class="hidden" style="padding:8px 12px;display:flex;align-items:center;gap:10px;border-top:1px solid var(--border)">
+          <span id="silence-summary" style="font-size:12px;color:var(--text2)"></span>
+          <button class="exp-btn exp-btn-red" style="padding:6px 14px;font-size:12px;margin-top:0" onclick="removeSilences()">⚡ Remove Silences & Download</button>
+        </div>
+      </div>` : ''}
       <div style="display:flex;gap:12px;margin-bottom:10px;font-size:12px;color:var(--text2)">
         <span>Total: <strong>${d.edit_decisions.length}</strong></span>
         <span style="color:var(--green)">Keep: <strong>${keeps}</strong></span>
@@ -805,7 +830,13 @@ function renderEditResults(d) {
         <div class="result-card"><div class="rc-label">DaVinci Resolve</div><div style="font-size:12px;color:var(--text2);margin-top:4px">${cg.davinci_node_order||'N/A'}</div></div>
         <div class="result-card"><div class="rc-label">Premiere Pro</div><div style="font-size:12px;color:var(--text2);margin-top:4px">${cg.premiere_lumetri||'N/A'}</div></div>
       </div>
+      <div class="result-card" style="margin-top:12px">
+        <div class="rc-label" style="margin-bottom:8px">🎨 Color DNA — Palette Extracted from Frames</div>
+        <div id="color-palette-wrap" class="palette-loading">Extracting palette…</div>
+      </div>
     `;
+    // Extract palette asynchronously from thumbnails
+    buildColorPalette();
   }
 
   // Captions tab
@@ -887,6 +918,23 @@ function renderEditResults(d) {
         <div class="sb-label" style="margin-bottom:6px;margin-top:14px">Motion Graphics</div>
         ${d.motion_graphics.map(mg=>`<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px"><span style="font-family:'JetBrains Mono',monospace;color:var(--accent);cursor:pointer;min-width:65px" onclick="seekTo(${tcToSec(mg.timecode)})">${mg.timecode}</span><span class="tool-badge">${mg.type}</span><span style="color:var(--text2);margin-left:6px">${mg.text} (${mg.duration}s)</span></div>`).join('')}
       ` : ''}
+
+      <div class="sb-label" style="margin:16px 0 10px">📐 Multi-Format Export</div>
+      <div class="format-grid">
+        ${[
+          {id:'original',  label:'16:9',  sub:'YouTube / Web',         w:16, h:9,  emoji:'🖥'},
+          {id:'shorts',    label:'9:16',  sub:'TikTok / Reels',        w:9,  h:16, emoji:'📱'},
+          {id:'square_1x1',label:'1:1',   sub:'Instagram Square',      w:1,  h:1,  emoji:'🟦'},
+          {id:'portrait_4x5',label:'4:5', sub:'Instagram Portrait',    w:4,  h:5,  emoji:'📸'},
+          {id:'cinema_21x9',label:'21:9', sub:'Cinematic Ultra Wide',  w:21, h:9,  emoji:'🎬'},
+        ].map(f=>`
+          <div class="format-card" onclick="exportAspectRatio('${f.id}')">
+            <div class="format-emoji">${f.emoji}</div>
+            <div class="format-preview-box" style="aspect-ratio:${f.w}/${f.h}"></div>
+            <div class="format-name">${f.label}</div>
+            <div class="format-sub">${f.sub}</div>
+          </div>`).join('')}
+      </div>
     `;
   }
 
@@ -1237,6 +1285,254 @@ async function downloadThumbnail(ts) {
 // ── Content Tab ───────────────────────────────────────────────────────────────
 
 // Global store for copy-button text (avoids backtick escaping issues in onclick)
+// ── Silence Detection ────────────────────────────────────────────────────
+
+function detectSilences(threshold = 0.06, minDurSec = 0.8) {
+  if (!S.audioWaveform.length || !S.meta) return [];
+  const dur = S.meta.duration_sec;
+  const n = S.audioWaveform.length;
+  const silences = [];
+  let silStart = null;
+  for (let i = 0; i <= n; i++) {
+    const amp = i < n ? S.audioWaveform[i] : 1; // sentinel ends silence
+    const t = (i / n) * dur;
+    if (silStart === null && amp < threshold) { silStart = t; }
+    else if (silStart !== null && amp >= threshold) {
+      if (t - silStart >= minDurSec) silences.push({start: silStart, end: t, dur: t - silStart});
+      silStart = null;
+    }
+  }
+  return silences;
+}
+
+function runSilenceDetect() {
+  const threshEl = $('sil-thresh');
+  const minEl = $('sil-min');
+  const threshold = threshEl ? parseInt(threshEl.value) / 100 : 0.06;
+  const minDur = minEl ? parseInt(minEl.value) / 10 : 0.8;
+  const sils = detectSilences(threshold, minDur);
+
+  const listEl = $('silence-list');
+  const actEl = $('silence-actions');
+  const sumEl = $('silence-summary');
+
+  if (!listEl) return;
+
+  if (!sils.length) {
+    listEl.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--text3)">No silences detected above threshold</div>';
+    if (actEl) actEl.classList.add('hidden');
+    return;
+  }
+
+  const totalSaved = sils.reduce((a, s) => a + s.dur, 0);
+  listEl.innerHTML = sils.map(s => `
+    <div class="silence-item">
+      <span class="sil-icon">🔇</span>
+      <span class="sil-tc" onclick="seekTo(${s.start.toFixed(2)})">${fmt(s.start)} → ${fmt(s.end)}</span>
+      <span class="sil-dur">${s.dur.toFixed(1)}s</span>
+    </div>`).join('');
+
+  if (actEl) actEl.style.display = 'flex';
+  if (actEl) actEl.classList.remove('hidden');
+  if (sumEl) sumEl.textContent = `${sils.length} silences · ${totalSaved.toFixed(1)}s saved`;
+
+  S._detectedSilences = sils;
+}
+
+async function removeSilences() {
+  if (!S.videoFile) { toast('No video file', 'error'); return; }
+  const sils = S._detectedSilences;
+  if (!sils?.length) { toast('Detect silences first', 'error'); return; }
+
+  toast('Removing silences… please wait', 'info');
+  const fd = new FormData();
+  fd.append('file', S.videoFile);
+  fd.append('silences', JSON.stringify(sils));
+  fd.append('color_grade', JSON.stringify(S.editData?.color_grade || {}));
+
+  try {
+    const resp = await fetch(`${API}/api/remove-silences`, {method:'POST', body:fd});
+    if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail||'Failed'); }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${S.meta?.filename?.replace(/\.[^.]+$/,'')||'video'}_no_silence.mp4`;
+    a.click(); URL.revokeObjectURL(url);
+    toast(`Done! ${sils.length} silences removed`, 'success');
+  } catch(e) {
+    toast(e.message || 'Failed', 'error');
+  }
+}
+
+// ── Color DNA Palette ─────────────────────────────────────────────────────
+
+async function extractPaletteFromImg(src, n = 8) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = 40; c.height = 23;
+        const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, 40, 23);
+        const d = ctx.getImageData(0, 0, 40, 23).data;
+        const buckets = {};
+        for (let i = 0; i < d.length; i += 4) {
+          const r = Math.round(d[i] / 28) * 28;
+          const g = Math.round(d[i+1] / 28) * 28;
+          const b = Math.round(d[i+2] / 28) * 28;
+          if (d[i+3] < 128) continue;
+          const k = `${r},${g},${b}`;
+          buckets[k] = (buckets[k] || 0) + 1;
+        }
+        const colors = Object.entries(buckets)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, n)
+          .map(([k]) => {
+            const [r,g,b] = k.split(',').map(Number);
+            return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+          });
+        resolve(colors);
+      } catch { resolve([]); }
+    };
+    img.onerror = () => resolve([]);
+    img.src = src;
+  });
+}
+
+async function buildColorPalette() {
+  const wrap = $('color-palette-wrap');
+  if (!wrap || !S.frames.length) return;
+
+  // Extract palette from up to 6 key frames (scene starts preferred)
+  const sceneTs = new Set(S.scenes.map(s => Math.round(s.timestamp_sec)));
+  const keyFrames = S.frames
+    .filter(f => sceneTs.has(Math.round(f.timestamp_sec)) && f.thumbnail_b64)
+    .slice(0, 6);
+  if (!keyFrames.length) {
+    const evenly = [0, Math.floor(S.frames.length/4), Math.floor(S.frames.length/2),
+                    Math.floor(3*S.frames.length/4), S.frames.length-1];
+    evenly.forEach(i => { if (S.frames[i]?.thumbnail_b64) keyFrames.push(S.frames[i]); });
+  }
+
+  const allColors = new Map();
+  for (const f of keyFrames.slice(0, 5)) {
+    const cols = await extractPaletteFromImg(f.thumbnail_b64, 6);
+    cols.forEach(c => allColors.set(c, (allColors.get(c)||0) + 1));
+  }
+
+  const sorted = [...allColors.entries()]
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([c]) => c);
+
+  if (!sorted.length) { wrap.innerHTML = '<span style="font-size:12px;color:var(--text3)">No frames available</span>'; return; }
+
+  wrap.className = 'palette-wrap';
+  wrap.innerHTML = sorted.map(hex => {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    const luminance = (0.299*r + 0.587*g + 0.114*b) / 255;
+    const textColor = luminance > 0.5 ? '#000' : '#fff';
+    return `<div class="palette-swatch" style="background:${hex}" title="${hex}">
+      <span class="palette-hex" style="color:${textColor}">${hex}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Multi-Format Export ───────────────────────────────────────────────────
+
+async function exportAspectRatio(format) {
+  if (!S.videoFile) { toast('No video file', 'error'); return; }
+  if (format === 'original') { processVideoOp('color_grade'); return; }
+
+  const {width: w, height: h} = S.meta || {width:1920, height:1080};
+  let crop;
+
+  if (format === 'shorts') {
+    // Re-use existing shorts logic
+    processVideoOp('shorts');
+    return;
+  } else if (format === 'square_1x1') {
+    const sq = Math.min(w, h);
+    const x = w > h ? Math.floor((w - sq) / 2) : 0;
+    const y = h > w ? Math.floor((h - sq) / 2) : 0;
+    crop = `crop=${sq}:${sq}:${x}:${y}`;
+  } else if (format === 'portrait_4x5') {
+    const th = Math.floor(w * 5 / 4);
+    if (th <= h) {
+      crop = `crop=${w}:${th}:0:${Math.floor((h - th) / 2)}`;
+    } else {
+      const tw = Math.floor(h * 4 / 5);
+      crop = `crop=${tw}:${h}:${Math.floor((w - tw) / 2)}:0`;
+    }
+  } else if (format === 'cinema_21x9') {
+    const ch = Math.floor(w * 9 / 21);
+    crop = `crop=${w}:${ch}:0:${Math.floor((h - ch) / 2)}`;
+  } else {
+    return;
+  }
+
+  toast(`Exporting ${format.replace('_',' ')}…`, 'info');
+  const fd = new FormData();
+  fd.append('file', S.videoFile);
+  fd.append('operation', 'custom_format');
+  fd.append('crop_filter', crop);
+  fd.append('color_grade', JSON.stringify(S.editData?.color_grade || {}));
+  fd.append('edit_decisions', '[]');
+  fd.append('shorts_clip', '{}');
+
+  try {
+    const resp = await fetch(`${API}/api/process-video`, {method:'POST', body:fd});
+    if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail||'Failed'); }
+    const blob = await resp.blob();
+    const sizeMB = (blob.size/1024/1024).toFixed(1);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${S.meta?.filename?.replace(/\.[^.]+$/,'')||'video'}_${format}.mp4`;
+    a.click(); URL.revokeObjectURL(url);
+    toast(`${format} exported (${sizeMB} MB)`, 'success');
+  } catch(e) {
+    toast(e.message || 'Export failed', 'error');
+  }
+}
+
+// ── AI Voiceover Script ───────────────────────────────────────────────────
+
+async function generateVoiceover(style = 'documentary') {
+  if (!S.editData) { toast('Run AI Edit first', 'error'); return; }
+  const btn = $('voiceover-btn');
+  const out = $('voiceover-output');
+  if (btn) { btn.disabled = true; btn.textContent = '✍️ Writing…'; }
+  if (out) { out.innerHTML = '<div style="color:var(--text3);font-size:12px">Generating voiceover script…</div>'; out.classList.remove('hidden'); }
+
+  const fd = new FormData();
+  fd.append('edit_data', JSON.stringify(S.editData));
+  fd.append('style', style);
+
+  let text = '';
+  try {
+    const resp = await fetch(`${API}/api/generate-voiceover`, {method:'POST', body:fd});
+    if (!resp.ok) throw new Error('Failed');
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while(true) {
+      const {done, value} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+        if (ev.type === 'text') { text += ev.text; if (out) out.innerHTML = `<div class="md-output">${md(text)}</div>`; }
+        else if (ev.type === 'error') throw new Error(ev.message);
+      }
+    }
+    toast('Voiceover script ready!', 'success');
+  } catch(e) {
+    if (out) out.innerHTML = `<div style="color:var(--red)">Error: ${e.message}</div>`;
+    toast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✍️ Generate Voiceover'; }
+  }
+}
+
 // ── Caption Translation ───────────────────────────────────────────────────
 
 async function translateCaptions() {
@@ -1465,6 +1761,24 @@ function renderContentTab() {
         Generate YouTube + TikTok + Instagram + X Content
       </button>
       <div id="social-content-result" style="margin-top:12px"></div>
+    </div>
+
+    <div class="content-block">
+      <div class="content-heading">🎙 AI Voiceover Script Generator</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <select id="voiceover-style" class="model-select" style="padding:5px 24px 5px 8px;font-size:12px;width:auto">
+          <option value="documentary">Documentary</option>
+          <option value="news">News / Broadcast</option>
+          <option value="commercial">Commercial / Ad</option>
+          <option value="tutorial">Tutorial / How-To</option>
+          <option value="storytelling">Cinematic Storytelling</option>
+          <option value="podcast">Podcast / Conversational</option>
+        </select>
+        <button class="upload-btn" style="padding:8px 16px;font-size:12.5px" id="voiceover-btn" onclick="generateVoiceover($('voiceover-style').value)">
+          ✍️ Generate Voiceover
+        </button>
+      </div>
+      <div id="voiceover-output" class="voiceover-block hidden"></div>
     </div>
   `;
 }
@@ -1773,6 +2087,10 @@ window.translateCaptions = translateCaptions;
 window.videoSearch = videoSearch;
 window.burnSubtitles = burnSubtitles;
 window.exportHighlightReel = exportHighlightReel;
+window.runSilenceDetect = runSilenceDetect;
+window.removeSilences = removeSilences;
+window.exportAspectRatio = exportAspectRatio;
+window.generateVoiceover = generateVoiceover;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();

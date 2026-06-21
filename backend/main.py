@@ -806,10 +806,11 @@ async def delete_file(file_id: str):
 @app.post("/api/process-video")
 async def process_video_op(
     file: UploadFile = File(...),
-    operation: str = Form("full_edit"),   # full_edit | shorts | color_grade
+    operation: str = Form("full_edit"),   # full_edit | shorts | color_grade | custom_format
     edit_decisions: str = Form("[]"),
     color_grade: str = Form("{}"),
     shorts_clip: str = Form("{}"),
+    crop_filter: str = Form(""),          # e.g. "crop=720:720:280:0" for custom_format
 ):
     if not ffmpeg_available():
         raise HTTPException(status_code=503, detail="FFmpeg is not installed on this server")
@@ -882,6 +883,16 @@ async def process_video_op(
             else:
                 cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
 
+        elif operation == "custom_format":
+            vf_chain = crop_filter + (f",{color_vf}" if color_vf else "") if crop_filter else color_vf
+            if vf_chain:
+                cmd = ["ffmpeg", "-y", "-i", in_path,
+                       "-vf", vf_chain,
+                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                       "-c:a", "copy", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
         result = subprocess.run(cmd, capture_output=True, timeout=600)
 
         if result.returncode != 0:
@@ -907,7 +918,10 @@ async def process_video_op(
         with open(out_path, "rb") as f:
             video_data = f.read()
 
-        suffix_map = {"full_edit": "edited", "shorts": "shorts_9x16", "color_grade": "color_graded"}
+        suffix_map = {
+            "full_edit": "edited", "shorts": "shorts_9x16", "color_grade": "color_graded",
+            "custom_format": "converted",
+        }
         out_name = f"{original_name}_{suffix_map.get(operation,'processed')}.mp4"
 
         return Response(
@@ -1120,6 +1134,89 @@ async def burn_subtitles(
             except Exception: pass
 
 
+@app.post("/api/remove-silences")
+async def remove_silences(
+    file: UploadFile = File(...),
+    silences: str = Form("[]"),
+    color_grade: str = Form("{}"),
+):
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg not available")
+    try:
+        silence_list = json.loads(silences)
+        cg = json.loads(color_grade)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
+
+    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp_in.write(content)
+    tmp_in.close()
+    out_path = tmp_in.name + "_no_silence.mp4"
+
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", tmp_in.name],
+            capture_output=True, text=True, timeout=15,
+        )
+        duration = float(probe.stdout.strip()) if probe.returncode == 0 and probe.stdout.strip() else 0.0
+        if duration <= 0:
+            raise HTTPException(status_code=422, detail="Could not determine video duration")
+
+        sils = sorted(silence_list, key=lambda x: float(x["start"]))
+        keep_segs: list[dict] = []
+        cursor = 0.0
+        for sil in sils:
+            s, e = float(sil["start"]), float(sil["end"])
+            if s > cursor + 0.05:
+                keep_segs.append({"action": "KEEP", "in_point": sec_to_tc(cursor), "out_point": sec_to_tc(s)})
+            cursor = e
+        if cursor < duration - 0.1:
+            keep_segs.append({"action": "KEEP", "in_point": sec_to_tc(cursor), "out_point": sec_to_tc(duration)})
+
+        color_vf = build_color_filter(cg)
+        fc, _ = build_edit_filter(keep_segs) if keep_segs else ("", "")
+
+        if fc:
+            if color_vf:
+                fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
+                cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
+                       "-filter_complex", fc_full,
+                       "-map", "[outv_colored]", "-map", "[outa]",
+                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                       "-c:a", "aac", "-b:a", "192k", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
+                       "-filter_complex", fc,
+                       "-map", "[outv_raw]", "-map", "[outa]",
+                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                       "-c:a", "aac", "-b:a", "192k", out_path]
+        elif color_vf:
+            cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-vf", color_vf,
+                   "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-c:a", "copy", out_path]
+        else:
+            cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-c", "copy", out_path]
+
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+        with open(out_path, "rb") as f:
+            video_data = f.read()
+        return Response(
+            content=video_data, media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{original_name}_no_silence.mp4"'},
+        )
+    finally:
+        for p in [tmp_in.name, out_path]:
+            try: os.unlink(p)
+            except Exception: pass
+
+
 @app.post("/api/highlight-reel")
 async def highlight_reel(
     file: UploadFile = File(...),
@@ -1197,6 +1294,69 @@ async def highlight_reel(
         for p in [tmp_in.name, out_path]:
             try: os.unlink(p)
             except Exception: pass
+
+
+@app.post("/api/generate-voiceover")
+async def generate_voiceover(
+    edit_data: str = Form(...),
+    style: str = Form("documentary"),
+):
+    try:
+        data = json.loads(edit_data)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+
+    summary = data.get("summary", "a video")
+    scenes = data.get("scenes", [])
+    dur = data.get("recommended_final_duration", 60)
+    genre = data.get("genre", "other")
+    scene_list = "\n".join(
+        f"Scene {s.get('id')}: {s.get('title')} ({s.get('in_point')} – {s.get('out_point')}) — {s.get('mood','')}"
+        for s in scenes[:12]
+    )
+
+    prompt = (
+        f"You are a professional voiceover writer. Write a {style} narration script for this video.\n\n"
+        f"Video summary: {summary}\n"
+        f"Genre: {genre}\n"
+        f"Duration: ~{round(dur)}s\n"
+        f"Scenes:\n{scene_list}\n\n"
+        "Write a word-for-word voiceover script that:\n"
+        "- Has natural spoken language rhythm\n"
+        "- Includes [PAUSE] markers between sentences\n"
+        "- Matches the pacing (timing in parentheses per section)\n"
+        "- Fits the genre and mood\n\n"
+        "Format your response as:\n"
+        "## Voiceover Script\n\n"
+        "[INTRO] (0:00–0:05)\n\"Your opening narration here...\"\n\n"
+        "[SECTION NAME] (timecode)\n\"Narration text...\"\n\n"
+        "## Director Notes\n"
+        "Tone, pacing, and delivery advice."
+    )
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-8",
+                max_tokens=2500,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": prompt}],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/health")
