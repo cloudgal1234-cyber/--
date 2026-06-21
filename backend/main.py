@@ -1364,4 +1364,170 @@ async def health():
     return {"status": "ok", "ffmpeg": ffmpeg_available()}
 
 
+IMAGE_ANALYSIS_PROMPT = """You are a world-class visual intelligence system combining photography expertise, computer vision, and AI art direction.
+
+Analyze this image and return ONLY this JSON (no markdown fences, no prose):
+
+{
+  "description": "2-3 sentence rich visual description",
+  "objects": [{"name":"object name","position":"where in frame","dominant":true}],
+  "faces": {"count": 0, "emotions": [], "estimated_ages": [], "notes": ""},
+  "text_in_image": "any visible text or empty string",
+  "colors": {
+    "dominant_hex": ["#hex1","#hex2","#hex3","#hex4","#hex5"],
+    "palette_mood": "warm|cool|neutral|vibrant|muted|earthy|pastel",
+    "color_story": "One sentence on how colors create the mood"
+  },
+  "composition": {
+    "type": "rule_of_thirds|centered|diagonal|symmetrical|frame_within_frame|other",
+    "horizon_placement": "upper|middle|lower|none",
+    "depth": "shallow|medium|deep",
+    "leading_lines": false,
+    "negative_space": "abundant|moderate|minimal",
+    "notes": "Specific composition analysis"
+  },
+  "lighting": {
+    "type": "natural|studio|artificial|mixed",
+    "direction": "front|side|back|top|none",
+    "quality": "soft|harsh|diffused|dramatic|flat",
+    "time_of_day": "golden_hour|blue_hour|midday|overcast|indoor|unknown",
+    "notes": "Specific lighting notes"
+  },
+  "technical": {
+    "shot_type": "macro|close_up|medium|wide|ultra_wide|aerial|other",
+    "estimated_lens": "fisheye|wide_angle|standard|portrait|telephoto",
+    "bokeh_visible": false,
+    "camera_angle": "eye_level|low_angle|high_angle|overhead|dutch_tilt",
+    "motion_blur": false,
+    "noise_level": "low|medium|high",
+    "estimated_settings": "f/2.8 ISO 800 1/500s (estimated)"
+  },
+  "quality": {
+    "sharpness": 8,
+    "exposure": "underexposed|slightly_under|good|slightly_over|overexposed",
+    "overall_score": 8,
+    "dynamic_range": "compressed|good|wide",
+    "verdict": "Professional quality portrait with excellent subject separation"
+  },
+  "mood": "The dominant emotional atmosphere",
+  "style": "e.g. Cinematic portrait photography, Documentary street, Commercial product shot",
+  "genre": "portrait|landscape|street|architecture|product|food|wildlife|macro|abstract|other",
+  "tags": ["tag1","tag2","tag3","tag4","tag5","tag6"],
+  "strengths": ["Specific strength 1", "Specific strength 2", "Specific strength 3"],
+  "improvements": ["Specific actionable improvement 1", "Improvement 2"],
+  "edit_suggestions": [
+    {"tool": "Exposure", "adjustment": "+0.3EV", "reason": "Slightly underexposed"},
+    {"tool": "Clarity", "adjustment": "+15", "reason": "Add definition to textures"}
+  ],
+  "ai_generation_prompt": "Highly detailed MidJourney/DALL-E/Firefly prompt to recreate or extend this image with AI generation",
+  "questions_to_explore": ["What story does this image tell?", "How could the composition be improved?"]
+}"""
+
+
+@app.post("/api/analyze-image")
+async def analyze_image(file: UploadFile = File(...)):
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 20MB)")
+    media_type = file.content_type or "image/jpeg"
+    if not media_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Not an image")
+
+    try:
+        uploaded = client.beta.files.upload(
+            file=(file.filename or "image.jpg", content, media_type)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    file_id = uploaded.id
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-8",
+                max_tokens=3500,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "file", "file_id": file_id}},
+                    {"type": "text", "text": IMAGE_ANALYSIS_PROMPT},
+                ]}],
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            try: client.beta.files.delete(file_id)
+            except Exception: pass
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/image-chat")
+async def image_chat(
+    file_id: str = Form(...),
+    messages: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    try:
+        msgs = json.loads(messages)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid messages JSON")
+
+    # Inject image into first user message
+    first_user = next((m for m in msgs if m["role"] == "user"), None)
+    if first_user and file_id:
+        content = first_user.get("content", "")
+        if isinstance(content, str):
+            first_user["content"] = [
+                {"type": "image", "source": {"type": "file", "file_id": file_id}},
+                {"type": "text", "text": content},
+            ]
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=2000,
+                thinking={"type": "adaptive"},
+                system="You are an expert visual analyst and photographer. Answer questions about the provided image with professional insight.",
+                messages=msgs,
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
