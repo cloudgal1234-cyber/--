@@ -224,15 +224,38 @@
           <div id="filmstrip" class="filmstrip"></div>
         </div>
 
+        <!-- Video Q&A collapsible panel -->
+        <div class="vqa-wrap" id="vqa-wrap">
+          <div class="vqa-header" onclick="toggleVideoQA()">
+            <div class="vqa-badge">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Video Q&A
+            </div>
+            <span style="font-size:11px;color:var(--text3)">Ask Claude about your video</span>
+            <svg class="vqa-chevron" id="vqa-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="vqa-body hidden" id="vqa-body">
+            <div class="vqa-messages" id="vqa-messages"></div>
+            <div class="vqa-input-row">
+              <input class="vqa-input" id="vqa-input" type="text" placeholder="Ask anything about this video…" onkeydown="if(event.key==='Enter')sendVideoChat()"/>
+              <button class="vqa-send" id="vqa-send" onclick="sendVideoChat()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Results tabs -->
         <div class="results-section">
           <div class="results-tabs">
             <button class="rtab active" data-tab="overview">Overview</button>
             <button class="rtab" data-tab="storyboard">🖼 Storyboard</button>
+            <button class="rtab" data-tab="thumbnail">🖼 Thumbnail</button>
             <button class="rtab" data-tab="cuts">✂️ Cuts</button>
             <button class="rtab" data-tab="scenes">🎬 Scenes</button>
             <button class="rtab" data-tab="color">🎨 Color</button>
             <button class="rtab" data-tab="captions">💬 Captions</button>
+            <button class="rtab" data-tab="content">✍️ Content</button>
             <button class="rtab" data-tab="ffmpeg">⚙️ FFmpeg</button>
             <button class="rtab" data-tab="shorts">📱 Shorts</button>
             <button class="rtab" data-tab="export">📥 Export</button>
@@ -254,10 +277,12 @@
               <div id="tab-overview-content" class="hidden"></div>
             </div>
             <div id="tab-storyboard" class="tab-panel hidden"></div>
+            <div id="tab-thumbnail" class="tab-panel hidden"></div>
             <div id="tab-cuts" class="tab-panel hidden"></div>
             <div id="tab-scenes" class="tab-panel hidden"></div>
             <div id="tab-color" class="tab-panel hidden"></div>
             <div id="tab-captions" class="tab-panel hidden"></div>
+            <div id="tab-content" class="tab-panel hidden"></div>
             <div id="tab-ffmpeg" class="tab-panel hidden"></div>
             <div id="tab-shorts" class="tab-panel hidden"></div>
             <div id="tab-export" class="tab-panel hidden"></div>

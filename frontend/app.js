@@ -13,14 +13,17 @@ const S = {
   // Video studio
   videoFile: null,
   videoBlobUrl: null,
-  frames: [],         // [{file_id, timestamp_sec, frame_index, thumbnail_b64}]
-  meta: null,         // {duration_sec, fps, width, height, filename, ...}
-  scenes: [],         // [{timestamp_sec, timestamp, correlation}]
-  energy: [],         // [{t, e}]
-  audioWaveform: [],  // [0..1] RMS amplitudes for timeline
-  editData: null,     // parsed AI edit JSON
+  frames: [],           // [{file_id, timestamp_sec, frame_index, thumbnail_b64}]
+  meta: null,           // {duration_sec, fps, width, height, filename, ...}
+  scenes: [],           // [{timestamp_sec, timestamp, correlation}]
+  energy: [],           // [{t, e}]
+  audioWaveform: [],    // [0..1] RMS amplitudes for timeline
+  editData: null,       // parsed AI edit JSON
   analyzing: false,
   batchExporting: false,
+  // Video Q&A chat
+  vqaMsgs: [],          // [{role, content}] Anthropic messages format
+  vqaStreaming: false,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -487,6 +490,11 @@ function buildStudio() {
   buildFilmstrip();
   drawTimeline();
   renderStoryboard();
+  renderThumbnailPicker();
+  // reset Q&A on new video
+  S.vqaMsgs = []; S.vqaStreaming = false;
+  const vqaEl = $('vqa-messages');
+  if (vqaEl) vqaEl.innerHTML = '';
 }
 
 function buildFilmstrip() {
@@ -613,7 +621,7 @@ function drawTimeline() {
 window.addEventListener('resize', () => { if (S.meta) drawTimeline(); });
 
 // ── Results tabs ────────────────────────────────────────────────────────────
-const ALL_TABS = ['overview','storyboard','cuts','scenes','color','captions','ffmpeg','shorts','export'];
+const ALL_TABS = ['overview','storyboard','thumbnail','cuts','scenes','color','captions','content','ffmpeg','shorts','export'];
 
 el.resultsTabs.forEach(tab => tab.addEventListener('click', () => {
   el.resultsTabs.forEach(t => t.classList.remove('active'));
@@ -944,8 +952,10 @@ function renderEditResults(d) {
     </div>
   `;
 
-  // Refresh storyboard with AI decision overlays
+  // Refresh tabs with AI data
   renderStoryboard();
+  renderThumbnailPicker();
+  renderContentTab();
 
   // Auto-switch to overview tab
   el.resultsTabs.forEach(t => t.classList.remove('active'));
@@ -1040,6 +1050,7 @@ function esc(t) { return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 el.vResetBtn.addEventListener('click', () => {
   S.frames.forEach(f => fetch(`${API}/api/files/${f.file_id}`,{method:'DELETE'}).catch(()=>{}));
   S.frames=[]; S.meta=null; S.scenes=[]; S.energy=[]; S.audioWaveform=[]; S.editData=null;
+  S.vqaMsgs=[]; S.vqaStreaming=false;
   if(S.videoBlobUrl){URL.revokeObjectURL(S.videoBlobUrl);S.videoBlobUrl=null;}
   S.videoFile=null;
   el.vStudio.classList.add('hidden');
@@ -1048,9 +1059,314 @@ el.vResetBtn.addEventListener('click', () => {
   el.aiPlaceholder.classList.remove('hidden');
   el.overviewContent.classList.add('hidden');
   el.overviewContent.innerHTML='';
-  const sb = $('tab-storyboard');
-  if(sb) sb.innerHTML='';
+  ['storyboard','thumbnail','content'].forEach(n => { const t=$(`tab-${n}`); if(t) t.innerHTML=''; });
+  const vqaEl=$('vqa-messages'); if(vqaEl) vqaEl.innerHTML='';
 });
+
+// ── Video Q&A ────────────────────────────────────────────────────────────────
+
+function toggleVideoQA() {
+  const body = $('vqa-body');
+  const chev = $('vqa-chevron');
+  if (!body) return;
+  const opening = body.classList.toggle('hidden');
+  if (chev) chev.classList.toggle('flipped', !body.classList.contains('hidden'));
+}
+
+async function sendVideoChat() {
+  if (S.vqaStreaming || !S.frames.length) return;
+  const input = $('vqa-input');
+  const question = (input?.value || '').trim();
+  if (!question) return;
+  if (input) input.value = '';
+
+  S.vqaStreaming = true;
+  const sendBtn = $('vqa-send');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.innerHTML = '<div class="tool-spinner" style="width:11px;height:11px;border-color:rgba(255,255,255,.2);border-top-color:white"></div>'; }
+
+  const msgs = $('vqa-messages');
+
+  // User bubble
+  const qDiv = document.createElement('div');
+  qDiv.className = 'vqa-msg vqa-user'; qDiv.textContent = question;
+  msgs?.appendChild(qDiv);
+
+  // AI bubble
+  const aDiv = document.createElement('div');
+  aDiv.className = 'vqa-msg vqa-ai';
+  const cursor = document.createElement('span'); cursor.className = 'streaming-cursor';
+  aDiv.appendChild(cursor);
+  msgs?.appendChild(aDiv);
+  msgs && (msgs.scrollTop = msgs.scrollHeight);
+
+  // Build message content
+  let content;
+  if (S.vqaMsgs.length === 0) {
+    const parts = [];
+    parts.push({type:'text', text:`Analyze this video: "${S.meta?.filename||'video'}" (${fmt(S.meta?.duration_sec)}, ${S.meta?.width}×${S.meta?.height}, ${S.meta?.fps?.toFixed(1)}fps). I've extracted ${S.frames.length} frames below.`});
+    S.frames.forEach((f,i) => {
+      parts.push({type:'image', source:{type:'file', file_id:f.file_id}});
+      parts.push({type:'text', text:`[Frame ${i+1} @ ${fmt(f.timestamp_sec)}]`});
+    });
+    parts.push({type:'text', text: question});
+    content = parts;
+  } else {
+    content = question;
+  }
+
+  S.vqaMsgs.push({role:'user', content});
+  let accText = '';
+
+  try {
+    const payload = {
+      messages: S.vqaMsgs.map(m=>({role:m.role, content:m.content})),
+      model: el.videoModelSel.value,
+      enable_thinking: false,
+      enable_web_search: false,
+      enable_code_execution: false,
+      system: `You are OmniAI Video Analyst. You have ${S.frames.length} extracted video frames. Answer questions about the video content — scenes, people, actions, text visible in frames, mood, etc. Reference frame numbers and timestamps when relevant.`,
+    };
+    const resp = await fetch(`${API}/api/chat`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf='';
+    while(true) {
+      const {done,value} = await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines=buf.split('\n'); buf=lines.pop();
+      for(const line of lines) {
+        if(!line.startsWith('data: ')) continue;
+        let ev; try{ev=JSON.parse(line.slice(6));}catch{continue;}
+        if(ev.type==='text') { accText+=ev.text; aDiv.innerHTML=md(accText); aDiv.appendChild(cursor); msgs&&(msgs.scrollTop=msgs.scrollHeight); }
+      }
+    }
+    cursor.remove();
+    if(accText) { aDiv.innerHTML=md(accText); S.vqaMsgs.push({role:'assistant',content:accText}); }
+    const badge=$('vqa-badge');
+    if(badge){badge.classList.remove('hidden');badge.textContent=Math.floor(S.vqaMsgs.length/2);}
+  } catch(e) {
+    cursor.remove(); aDiv.innerHTML=`<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+  } finally {
+    S.vqaStreaming=false;
+    if(sendBtn){sendBtn.disabled=false;sendBtn.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';}
+    msgs&&(msgs.scrollTop=msgs.scrollHeight);
+  }
+}
+
+// ── Thumbnail Picker ──────────────────────────────────────────────────────────
+
+function renderThumbnailPicker() {
+  const tab = $('tab-thumbnail');
+  if (!tab || !S.frames.length) { if(tab) tab.innerHTML='<div class="ap-sub" style="text-align:center;padding:30px;color:var(--text3)">Upload a video first</div>'; return; }
+
+  const aiTs = S.editData?.thumbnail?.best_frame_timestamp;
+  const aiSec = aiTs ? tcToSec(aiTs) : null;
+
+  const panels = S.frames.map((f,i) => {
+    const isAI = aiSec !== null && Math.abs(f.timestamp_sec - aiSec) < 2;
+    return `
+      <div class="thumb-panel${isAI?' thumb-panel-best':''}">
+        ${isAI?'<div class="thumb-best-badge">⭐ AI Pick</div>':''}
+        ${f.thumbnail_b64
+          ?`<img class="sb-thumb" src="${f.thumbnail_b64}" alt="F${i+1}" loading="lazy"/>`
+          :`<div class="sb-thumb sb-thumb-placeholder">F${i+1}</div>`}
+        <div class="thumb-info">
+          <span class="sb-tc">${fmt(f.timestamp_sec)}</span>
+          <button class="thumb-dl-btn" onclick="downloadThumbnail(${f.timestamp_sec})">⬇ Save HD</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const aiNote = S.editData?.thumbnail ? `
+    <div class="thumb-ai-rec">
+      ⭐ <strong>AI recommends ${aiTs}</strong>${S.editData.thumbnail.text_overlay?` — "${esc(S.editData.thumbnail.text_overlay)}"`:''}<br/>
+      ${S.editData.thumbnail.composition_notes?`<span style="font-size:11px;color:var(--text3)">${esc(S.editData.thumbnail.composition_notes)}</span>`:''}
+    </div>` : '';
+
+  tab.innerHTML = `
+    ${aiNote}
+    <div class="sb-header" style="margin-top:${aiNote?'10px':'0'}">
+      <span><strong>${S.frames.length}</strong> frames — click Save HD to download full-resolution JPEG</span>
+    </div>
+    <div class="storyboard-grid">${panels}</div>`;
+}
+
+async function downloadThumbnail(ts) {
+  if (!S.videoFile) { toast('Video file no longer in memory — re-upload to extract thumbnail', 'error'); return; }
+  toast('Extracting high-res thumbnail…', 'info');
+  const fd = new FormData(); fd.append('file', S.videoFile); fd.append('timestamp', ts);
+  try {
+    const resp = await fetch(`${API}/api/extract-thumbnail`, {method:'POST', body:fd});
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const base = (S.meta?.filename||'video').replace(/\.[^.]+$/,'');
+    dlBlob(blob, `${base}_thumb_${Math.round(ts)}s.jpg`);
+    toast('Thumbnail downloaded!', 'success');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Content Tab ───────────────────────────────────────────────────────────────
+
+// Global store for copy-button text (avoids backtick escaping issues in onclick)
+const COPY_STORE = {};
+let _cpIdx = 0;
+function _store(text) { const k=`k${_cpIdx++}`; COPY_STORE[k]=text; return k; }
+function copyStored(k) { navigator.clipboard.writeText(COPY_STORE[k]||'').then(()=>toast('Copied!','success')); }
+function copyText(t) { navigator.clipboard.writeText(t).then(()=>toast('Copied!','success')); }
+
+function tcToYTChapter(sec) {
+  const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=Math.floor(sec%60);
+  return h>0?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`;
+}
+
+function colorGradeToCss(cg) {
+  if (!cg) return '';
+  const br = Math.max(0.5, Math.min(2, 1 + (cg.exposure||0)/15));
+  const co = Math.max(0.5, Math.min(2.5, 1 + (cg.contrast||0)/100));
+  const sa = Math.max(0, Math.min(3, 1 + ((cg.saturation||0)+(cg.vibrance||0)*0.4)/100));
+  const sep = (cg.temperature||5500) < 4500 ? 0.25 : 0;
+  const hue = (cg.temperature||5500) > 6500 ? -15 : ((cg.temperature||5500) < 4500 ? 20 : 0);
+  return `brightness(${br.toFixed(2)}) contrast(${co.toFixed(2)}) saturate(${sa.toFixed(2)})${sep>0?` sepia(${sep})`:''}${hue!==0?` hue-rotate(${hue}deg)`:''}`;
+}
+
+function renderContentTab() {
+  const tab = $('tab-content');
+  if (!tab) return;
+
+  if (!S.editData && !S.frames.length) {
+    tab.innerHTML = '<div class="ap-sub" style="text-align:center;padding:30px;color:var(--text3)">Upload a video and run AI Edit to generate content</div>';
+    return;
+  }
+
+  const d = S.editData || {};
+
+  // Auto-chapters from scenes
+  const chapters = (d.scenes||[]).filter(sc=>sc.keep!==false).map(sc=>({
+    label: tcToYTChapter(tcToSec(sc.in_point||'0')),
+    title: sc.title||`Scene ${sc.id||'?'}`,
+  }));
+  const chapText = chapters.map(c=>`${c.label} ${c.title}`).join('\n');
+  const chapKey = _store(chapText);
+
+  // Before/After preview
+  const cg = d.color_grade || {};
+  const cssFilter = colorGradeToCss(cg);
+  const midFrame = S.frames[Math.floor(S.frames.length/2)];
+
+  tab.innerHTML = `
+    <div class="content-block">
+      <div class="content-heading">📺 YouTube Chapters <span style="font-size:11px;color:var(--text3);font-weight:400">(auto-generated from AI scenes)</span></div>
+      ${chapters.length ? `
+        <div class="content-card">
+          <pre class="content-code">${esc(chapText)}</pre>
+          <button class="ff-copy" onclick="copyStored('${chapKey}')">Copy</button>
+        </div>
+      ` : '<div style="color:var(--text3);font-size:12.5px">Run AI Edit to generate chapters from scenes</div>'}
+    </div>
+
+    <div class="content-block">
+      <div class="content-heading">🎨 Before / After Color Preview <span style="font-size:11px;color:var(--text3);font-weight:400">(CSS approximation of ${cg.style||'AI'} grade)</span></div>
+      ${midFrame?.thumbnail_b64 ? `
+        <div class="ba-wrap">
+          <div class="ba-panel">
+            <div class="ba-label">Original</div>
+            <img class="ba-img" src="${midFrame.thumbnail_b64}" alt="Original"/>
+            <div class="ba-stat">No filter</div>
+          </div>
+          <div class="ba-panel">
+            <div class="ba-label">${esc(cg.style||'Color Graded')}</div>
+            <img class="ba-img" src="${midFrame.thumbnail_b64}" alt="Graded" style="filter:${cssFilter}"/>
+            <div class="ba-stat">Temp ${cg.temperature||5500}K · Exp ${cg.exposure>0?'+':''}${cg.exposure||0} · Sat ${cg.saturation>0?'+':''}${cg.saturation||0}</div>
+          </div>
+        </div>` : '<div style="color:var(--text3);font-size:12.5px">Frame thumbnails not available</div>'}
+    </div>
+
+    <div class="content-block">
+      <div class="content-heading">✍️ Social Media Content Generator</div>
+      <button class="upload-btn" style="padding:9px 18px;font-size:12.5px" id="gen-social-btn" onclick="generateSocialContent()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Generate YouTube + TikTok + Instagram + X Content
+      </button>
+      <div id="social-content-result" style="margin-top:12px"></div>
+    </div>
+  `;
+}
+
+async function generateSocialContent() {
+  if (!S.editData) { toast('Run AI Edit first', 'error'); return; }
+  const btn = $('gen-social-btn'); const result = $('social-content-result');
+  if (!btn || !result) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="tool-spinner" style="width:12px;height:12px;border-color:rgba(255,255,255,.2);border-top-color:white;display:inline-block;vertical-align:middle;margin-right:6px"></div>Writing content…';
+  result.innerHTML = '<div style="color:var(--text3);font-size:12.5px;padding:8px 0">Generating for YouTube, TikTok, Instagram, and X…</div>';
+
+  const d = S.editData;
+  const prompt = `Create a full social media content package for this video:
+- Duration: ${fmt(S.meta?.duration_sec)} | Genre: ${d.genre||'Unknown'} | Score: ${d.overall_score||'?'}/10
+- Summary: ${d.summary||'N/A'}
+- Hook: "${d.shorts_clip?.hook_text||'N/A'}" | Virality: ${d.shorts_clip?.virality_score||'?'}/10
+- Strengths: ${(d.top_strengths||[]).join(', ')}
+
+Return ONLY this JSON (no markdown fences):
+{"youtube":{"title":"SEO title <70 chars","description":"3 paragraphs with timestamps and CTA","tags":["tag1","tag2"]},"tiktok":{"hook":"First 3s script","caption":"<150 chars","hashtags":["#t1","#t2"]},"instagram":{"caption":"150 word caption","hashtags":["#h1","#h2"]},"twitter":{"tweet":"<280 chars","thread":["t1","t2","t3"]}}`;
+
+  try {
+    const resp = await fetch(`${API}/api/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      messages:[{role:'user',content:prompt}],
+      model:el.videoModelSel.value,
+      enable_thinking:false,enable_web_search:false,enable_code_execution:false,
+      system:'You are a professional social media content strategist. Output only valid JSON.',
+    })});
+    if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='', fullText='';
+    while(true){const{done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();for(const l of lines){if(!l.startsWith('data: '))continue;let ev;try{ev=JSON.parse(l.slice(6));}catch{continue;}if(ev.type==='text')fullText+=ev.text;}}
+    let social;
+    try { const clean=fullText.replace(/```(?:json)?\s*/g,'').replace(/```\s*$/,'').trim(); social=JSON.parse(clean); }
+    catch { result.innerHTML=`<div class="text-content">${md(fullText)}</div>`; return; }
+    result.innerHTML = renderSocialContent(social);
+  } catch(e) {
+    result.innerHTML=`<div style="color:var(--red);font-size:12.5px">Error: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled=false;
+    btn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Regenerate Content';
+  }
+}
+
+function renderSocialContent(s) {
+  const parts = [];
+  if (s.youtube) {
+    const yt=s.youtube, tk=_store((yt.tags||[]).join(', ')), dk=_store(yt.description||'');
+    parts.push(`<div class="social-platform"><div class="social-ph">▶️ YouTube</div>
+      <div class="social-field"><div class="social-label">Title</div><div class="social-val">${esc(yt.title||'')}</div><button class="ff-copy" onclick="copyStored('${_store(yt.title||'')}')">Copy</button></div>
+      <div class="social-field"><div class="social-label">Description</div><div class="social-val social-desc">${esc(yt.description||'').replace(/\n/g,'<br>')}</div><button class="ff-copy" onclick="copyStored('${dk}')">Copy</button></div>
+      ${yt.tags?.length?`<div class="social-field"><div class="social-label">Tags</div><div class="social-tags">${yt.tags.map(t=>`<span class="social-tag">${esc(t)}</span>`).join('')}</div><button class="ff-copy" onclick="copyStored('${tk}')">Copy All</button></div>`:''}
+    </div>`);
+  }
+  if (s.tiktok) {
+    const tt=s.tiktok, hk=_store((tt.hashtags||[]).join(' '));
+    parts.push(`<div class="social-platform"><div class="social-ph">🎵 TikTok</div>
+      ${tt.hook?`<div class="social-field"><div class="social-label">Hook (First 3s)</div><div class="social-val social-hook">"${esc(tt.hook)}"</div><button class="ff-copy" onclick="copyStored('${_store(tt.hook)}')">Copy</button></div>`:''}
+      <div class="social-field"><div class="social-label">Caption</div><div class="social-val">${esc(tt.caption||'')}</div><button class="ff-copy" onclick="copyStored('${_store(tt.caption||'')}')">Copy</button></div>
+      ${tt.hashtags?.length?`<div class="social-field"><div class="social-label">Hashtags</div><div class="social-tags">${tt.hashtags.map(t=>`<span class="social-tag">${esc(t)}</span>`).join('')}</div><button class="ff-copy" onclick="copyStored('${hk}')">Copy All</button></div>`:''}
+    </div>`);
+  }
+  if (s.instagram) {
+    const ig=s.instagram, hk=_store((ig.hashtags||[]).join(' '));
+    parts.push(`<div class="social-platform"><div class="social-ph">📸 Instagram</div>
+      <div class="social-field"><div class="social-label">Caption</div><div class="social-val social-desc">${esc(ig.caption||'').replace(/\n/g,'<br>')}</div><button class="ff-copy" onclick="copyStored('${_store(ig.caption||'')}')">Copy</button></div>
+      ${ig.hashtags?.length?`<div class="social-field"><div class="social-label">Hashtags</div><div class="social-tags">${ig.hashtags.map(t=>`<span class="social-tag">${esc(t)}</span>`).join('')}</div><button class="ff-copy" onclick="copyStored('${hk}')">Copy All</button></div>`:''}
+    </div>`);
+  }
+  if (s.twitter) {
+    const tw=s.twitter;
+    parts.push(`<div class="social-platform"><div class="social-ph">𝕏 Twitter / X</div>
+      <div class="social-field"><div class="social-label">Tweet</div><div class="social-val">${esc(tw.tweet||'')}</div><button class="ff-copy" onclick="copyStored('${_store(tw.tweet||'')}')">Copy</button></div>
+      ${tw.thread?.length?`<div class="social-field"><div class="social-label">Thread</div>${tw.thread.map((t,i)=>`<div class="social-thread-item"><span class="social-thread-num">${i+1}</span><span>${esc(t)}</span><button class="ff-copy" onclick="copyStored('${_store(t)}')">Copy</button></div>`).join('')}</div>`:''}
+    </div>`);
+  }
+  return parts.join('');
+}
 
 // ── Cut preview ─────────────────────────────────────────────────────────────
 
@@ -1269,6 +1585,13 @@ window.processVideoOp = processVideoOp;
 window.batchExport = batchExport;
 window.previewCut = previewCut;
 window.renderStoryboard = renderStoryboard;
+window.toggleVideoQA = toggleVideoQA;
+window.sendVideoChat = sendVideoChat;
+window.downloadThumbnail = downloadThumbnail;
+window.renderContentTab = renderContentTab;
+window.generateSocialContent = generateSocialContent;
+window.copyStored = copyStored;
+window.copyText = copyText;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();
