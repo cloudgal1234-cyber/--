@@ -532,11 +532,14 @@ async def stream_ai_edit(
     timestamps: list[float],
     model: str,
     duration: float,
+    edit_instructions: str = "",
 ) -> AsyncGenerator[str, None]:
     n = len(frame_file_ids)
     ts_str = str([round(t, 1) for t in timestamps])
 
     prompt = AI_EDIT_PROMPT.format(n=n, duration=round(duration, 1), timestamps=ts_str)
+    if edit_instructions.strip():
+        prompt += f"\n\nDirector's additional instructions: {edit_instructions.strip()}\nPrioritize these instructions when making edit decisions."
 
     content = [{"type": "text", "text": prompt}]
     for i, fid in enumerate(frame_file_ids):
@@ -670,6 +673,7 @@ async def ai_edit(
     timestamps: str = Form(...),
     model: str = Form("claude-opus-4-8"),
     duration: float = Form(0),
+    edit_instructions: str = Form(""),
 ):
     try:
         ids = json.loads(frame_ids)
@@ -680,7 +684,7 @@ async def ai_edit(
         raise HTTPException(status_code=422, detail="No frames")
 
     return StreamingResponse(
-        stream_ai_edit(ids, ts, model, duration),
+        stream_ai_edit(ids, ts, model, duration, edit_instructions),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -958,6 +962,241 @@ async def extract_thumbnail(
             os.unlink(tmp.name)
         except Exception:
             pass
+
+
+@app.post("/api/translate-captions")
+async def translate_captions(
+    captions: str = Form(...),
+    target_language: str = Form("Spanish"),
+):
+    try:
+        caps = json.loads(captions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+
+    cap_lines = "\n".join(
+        f'{c.get("id","?")}. [{c.get("start","")} --> {c.get("end","")}] {c.get("text","")}'
+        for c in caps
+    )
+    prompt = (
+        f"Translate these video captions to {target_language}.\n"
+        "Return ONLY a JSON array with the exact same structure but with the 'text' field translated. "
+        "Keep timecodes and IDs unchanged. Return ONLY valid JSON array, no markdown.\n\n"
+        f"{cap_lines}"
+    )
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-8",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": prompt}],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
+                        except Exception as e:
+                            yield f"data: {json.dumps({'type': 'error', 'message': f'Parse error: {e}'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/video-search")
+async def video_search(
+    query: str = Form(...),
+    frame_ids: str = Form(...),
+    timestamps: str = Form(...),
+):
+    try:
+        ids = json.loads(frame_ids)
+        ts = json.loads(timestamps)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
+    if not ids:
+        raise HTTPException(status_code=422, detail="No frames")
+
+    content = [
+        {"type": "text", "text": (
+            f"Search through these {len(ids)} video frames (indexed 0 to {len(ids)-1}) and find the frame that best matches: \"{query}\"\n\n"
+            "Respond with ONLY this JSON (no markdown):\n"
+            "{\"frame_index\": N, \"timestamp\": T, \"confidence\": 0.0-1.0, \"reason\": \"one sentence explanation\"}"
+        )}
+    ]
+    for i, fid in enumerate(ids):
+        content.append({"type": "image", "source": {"type": "file", "file_id": fid}})
+        content.append({"type": "text", "text": f"[Frame {i} @ {ts[i]:.1f}s]"})
+
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=256,
+            thinking={"type": "adaptive"},
+            messages=[{"role": "user", "content": content}],
+            betas=["files-api-2025-04-14"],
+        )
+        text = next((b.text for b in msg.content if hasattr(b, "text")), "")
+        clean = re.sub(r"```(?:json)?\s*", "", text).strip()
+        result = json.loads(clean)
+        return result
+    except Exception as e:
+        return {"frame_index": 0, "timestamp": ts[0] if ts else 0.0, "confidence": 0.0, "reason": str(e)}
+
+
+@app.post("/api/burn-subtitles")
+async def burn_subtitles(
+    file: UploadFile = File(...),
+    captions: str = Form(...),
+    style: str = Form("default"),
+):
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg not available")
+    try:
+        caps = json.loads(captions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid captions JSON")
+
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
+
+    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp_in.write(content)
+    tmp_in.close()
+
+    srt_lines: list[str] = []
+    for i, c in enumerate(caps, 1):
+        srt_lines += [str(i), f"{c.get('start','00:00:00,000')} --> {c.get('end','00:00:02,000')}", c.get("text", ""), ""]
+    tmp_srt = tempfile.NamedTemporaryFile(suffix=".srt", delete=False, mode="w", encoding="utf-8")
+    tmp_srt.write("\n".join(srt_lines))
+    tmp_srt.close()
+
+    out_path = tmp_in.name + "_subtitled.mp4"
+
+    force_styles = {
+        "default": "FontName=Arial,FontSize=22,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=2,Shadow=1",
+        "tiktok":  "FontName=Arial Black,FontSize=30,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=3,Outline=3,BackColour=&H80000000,Bold=1",
+        "minimal": "FontName=Arial,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=0",
+    }
+    fs = force_styles.get(style, force_styles["default"])
+
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", tmp_in.name,
+            "-vf", f"subtitles={tmp_srt.name}:force_style='{fs}'",
+            "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+            "-c:a", "copy", out_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+        with open(out_path, "rb") as f:
+            video_data = f.read()
+        return Response(
+            content=video_data,
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{original_name}_subtitled.mp4"'},
+        )
+    finally:
+        for p in [tmp_in.name, tmp_srt.name, out_path]:
+            try: os.unlink(p)
+            except Exception: pass
+
+
+@app.post("/api/highlight-reel")
+async def highlight_reel(
+    file: UploadFile = File(...),
+    edit_decisions: str = Form("[]"),
+    color_grade: str = Form("{}"),
+    max_duration: float = Form(60.0),
+):
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg not available")
+    try:
+        decisions = json.loads(edit_decisions)
+        cg = json.loads(color_grade)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
+
+    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp_in.write(content)
+    tmp_in.close()
+    out_path = tmp_in.name + "_highlights.mp4"
+
+    # Select only the KEEP segments, pick best ones up to max_duration
+    keeps = [d for d in decisions if d.get("action") in ("KEEP", "TRIM")]
+    # Sort by quality if available; otherwise take first N seconds
+    selected, total_dur = [], 0.0
+    for k in keeps:
+        in_s = tc_to_sec(k.get("in_point", "00:00:00.000"))
+        out_s = tc_to_sec(k.get("out_point", "00:00:05.000"))
+        seg_dur = out_s - in_s
+        if seg_dur < 0.5 or total_dur + seg_dur > max_duration:
+            continue
+        selected.append(k)
+        total_dur += seg_dur
+
+    try:
+        color_vf = build_color_filter(cg)
+        if selected:
+            fc, _ = build_edit_filter(selected)
+            if fc:
+                if color_vf:
+                    fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
+                    cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
+                           "-filter_complex", fc_full,
+                           "-map", "[outv_colored]", "-map", "[outa]",
+                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                           "-c:a", "aac", "-b:a", "192k", out_path]
+                else:
+                    cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
+                           "-filter_complex", fc,
+                           "-map", "[outv_raw]", "-map", "[outa]",
+                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                           "-c:a", "aac", "-b:a", "192k", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-c", "copy", out_path]
+        else:
+            # Fallback: first max_duration seconds
+            cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
+                   "-t", str(max_duration), "-c", "copy", out_path]
+
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+        with open(out_path, "rb") as f:
+            video_data = f.read()
+        return Response(
+            content=video_data,
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{original_name}_highlights.mp4"'},
+        )
+    finally:
+        for p in [tmp_in.name, out_path]:
+            try: os.unlink(p)
+            except Exception: pass
 
 
 @app.get("/api/health")

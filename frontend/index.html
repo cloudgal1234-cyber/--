@@ -185,6 +185,7 @@
         <div class="studio-topbar">
           <div id="v-meta" class="v-meta"></div>
           <div class="studio-actions">
+            <input type="text" id="edit-instructions" class="edit-instructions-input" placeholder="Edit style: cinematic, fast-paced, documentary…" title="Custom edit instructions for AI"/>
             <button id="ai-edit-btn" class="action-btn action-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               AI Edit
@@ -243,6 +244,14 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- AI Video Search -->
+        <div class="vsearch-wrap" id="vsearch-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="vsearch-input" class="vsearch-input" placeholder="Find moment: 'person laughing', 'outdoor scene', 'product on table'…" onkeydown="if(event.key==='Enter')videoSearch()"/>
+          <button class="vsearch-btn" id="vsearch-btn" onclick="videoSearch()">Find</button>
+          <div id="vsearch-result" class="vsearch-result hidden"></div>
         </div>
 
         <!-- Results tabs -->

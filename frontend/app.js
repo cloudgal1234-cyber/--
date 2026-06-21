@@ -650,6 +650,8 @@ async function runAiEdit() {
   fd.append('timestamps', JSON.stringify(S.frames.map(f => f.timestamp_sec)));
   fd.append('model', el.videoModelSel.value);
   fd.append('duration', S.meta.duration_sec);
+  const editInstr = $('edit-instructions');
+  if (editInstr?.value.trim()) fd.append('edit_instructions', editInstr.value.trim());
 
   let accumulated = '';
 
@@ -808,15 +810,24 @@ function renderEditResults(d) {
 
   // Captions tab
   if (d.captions?.length) {
+    const LANGS = ['Spanish','French','German','Portuguese','Italian','Japanese','Korean','Chinese','Arabic','Hebrew','Russian','Hindi'];
     el.tabCaptions.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <span style="font-size:13px;color:var(--text2)">${d.captions.length} captions generated</span>
-        <button class="upload-btn" style="padding:6px 14px;font-size:12px" onclick="downloadSRT()">📥 Download SRT</button>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:13px;color:var(--text2)">${d.captions.length} captions</span>
+        <div class="cap-translate-row">
+          <select id="cap-lang-sel" class="model-select" style="padding:5px 24px 5px 8px;font-size:12px;flex-shrink:0">
+            ${LANGS.map(l=>`<option>${l}</option>`).join('')}
+          </select>
+          <button class="ff-copy" id="cap-translate-btn" style="white-space:nowrap" onclick="translateCaptions()">🌐 Translate</button>
+        </div>
+        <button class="ff-copy" style="white-space:nowrap" onclick="downloadSRT()">📥 SRT</button>
+        <button class="ff-copy" style="white-space:nowrap" onclick="burnSubtitles('default')">🔥 Burn Default</button>
+        <button class="ff-copy" style="white-space:nowrap" onclick="burnSubtitles('tiktok')">🔥 TikTok Style</button>
       </div>
-      <div class="caption-list">${d.captions.map(c => `
+      <div id="cap-list" class="caption-list">${d.captions.map(c => `
         <div class="cap-item" onclick="seekTo(${srtTcToSec(c.start)})">
           <span class="cap-tc">${c.start||''} → ${c.end||''}</span>
-          <span><span class="cap-speaker">${c.speaker||''}</span><span class="cap-text">${c.text||''}</span></span>
+          <span><span class="cap-speaker">${esc(c.speaker||'')}</span><span class="cap-text">${esc(c.text||'')}</span></span>
         </div>`).join('')}
       </div>`;
   }
@@ -886,7 +897,7 @@ function renderEditResults(d) {
   const hasShortsClip = !!(d.shorts_clip?.best_start);
   el.tabExport.innerHTML = `
     <div class="export-section-label">🎬 Server-Side Video Processing</div>
-    <div class="export-grid export-grid-3">
+    <div class="export-grid export-grid-4">
       <div class="exp-card exp-card-process">
         <div class="exp-icon">✂️</div>
         <div class="exp-name">Full AI Edit</div>
@@ -914,6 +925,15 @@ function renderEditResults(d) {
           ⚡ Process & Download
         </button>
       </div>
+      <div class="exp-card exp-card-process">
+        <div class="exp-icon">🎯</div>
+        <div class="exp-name">Highlight Reel</div>
+        <div class="exp-desc">Auto-select best KEEP segments (up to 60s) → single MP4</div>
+        <div class="exp-proc-status" id="proc-status-highlight"></div>
+        <button class="exp-btn exp-btn-red" id="proc-btn-highlight" onclick="exportHighlightReel()" ${hasEdits?'':'disabled'}>
+          ⚡ Generate Highlights
+        </button>
+      </div>
     </div>
 
     <div style="margin-top:14px;margin-bottom:18px">
@@ -930,6 +950,15 @@ function renderEditResults(d) {
         <div class="exp-name">SRT Subtitles</div>
         <div class="exp-desc">Download generated captions as .srt subtitle file</div>
         <button class="exp-btn" onclick="downloadSRT()" ${hasCaptions?'':'disabled'}>📥 Download .srt</button>
+      </div>
+      <div class="exp-card">
+        <div class="exp-icon">🔥</div>
+        <div class="exp-name">Burn Subtitles</div>
+        <div class="exp-desc">Permanently burn captions into video (Default / TikTok style)</div>
+        <div style="display:flex;gap:6px;margin-top:auto">
+          <button class="exp-btn" style="flex:1;padding:7px 8px;font-size:11.5px" onclick="burnSubtitles('default')" ${hasCaptions?'':'disabled'}>Default</button>
+          <button class="exp-btn" style="flex:1;padding:7px 8px;font-size:11.5px;background:linear-gradient(135deg,#ef4444,#f59e0b)" onclick="burnSubtitles('tiktok')" ${hasCaptions?'':'disabled'}>TikTok</button>
+        </div>
       </div>
       <div class="exp-card">
         <div class="exp-icon">🎬</div>
@@ -1208,6 +1237,154 @@ async function downloadThumbnail(ts) {
 // ── Content Tab ───────────────────────────────────────────────────────────────
 
 // Global store for copy-button text (avoids backtick escaping issues in onclick)
+// ── Caption Translation ───────────────────────────────────────────────────
+
+async function translateCaptions() {
+  if (!S.editData?.captions?.length) return;
+  const langSel = $('cap-lang-sel');
+  const lang = langSel?.value || 'Spanish';
+  const btn = $('cap-translate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '🌐 Translating…'; }
+
+  const fd = new FormData();
+  fd.append('captions', JSON.stringify(S.editData.captions));
+  fd.append('target_language', lang);
+
+  let translated = null;
+  try {
+    const resp = await fetch(`${API}/api/translate-captions`, {method:'POST', body:fd});
+    if (!resp.ok) throw new Error('Translation request failed');
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while(true) {
+      const {done,value} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+        if (ev.type === 'result') translated = ev.data;
+        else if (ev.type === 'error') throw new Error(ev.message);
+      }
+    }
+    if (!translated) throw new Error('No translation received');
+    const capList = $('cap-list');
+    if (capList) {
+      capList.innerHTML = translated.map(c => `
+        <div class="cap-item" onclick="seekTo(${srtTcToSec(c.start)})">
+          <span class="cap-tc">${c.start||''} → ${c.end||''}</span>
+          <span><span class="cap-speaker">${esc(c.speaker||'')}</span><span class="cap-text">${esc(c.text||'')}</span></span>
+        </div>`).join('');
+    }
+    S.editData._translatedCaptions = translated;
+    toast(`Translated to ${lang}!`, 'success');
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌐 Translate'; }
+  }
+}
+
+// ── AI Video Search ───────────────────────────────────────────────────────
+
+async function videoSearch() {
+  if (!S.frames.length) { toast('Upload and analyze a video first', 'info'); return; }
+  const input = $('vsearch-input');
+  const query = input?.value.trim();
+  if (!query) { toast('Enter a search query', 'info'); return; }
+
+  const btn = $('vsearch-btn');
+  const resultEl = $('vsearch-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+  if (resultEl) resultEl.classList.add('hidden');
+
+  const fd = new FormData();
+  fd.append('query', query);
+  fd.append('frame_ids', JSON.stringify(S.frames.map(f => f.file_id)));
+  fd.append('timestamps', JSON.stringify(S.frames.map(f => f.timestamp_sec)));
+
+  try {
+    const resp = await fetch(`${API}/api/video-search`, {method:'POST', body:fd});
+    if (!resp.ok) throw new Error('Search failed');
+    const result = await resp.json();
+    const ts = result.timestamp ?? result.timestamp_sec ?? 0;
+    const pct = Math.round((result.confidence || 0) * 100);
+    if (resultEl) {
+      resultEl.className = 'vsearch-result';
+      resultEl.innerHTML = `
+        <span class="vsearch-ts" onclick="seekTo(${ts})" title="Jump to ${fmt(ts)}">▶ ${fmt(ts)}</span>
+        <span class="vsearch-conf">${pct}% match</span>
+        <span class="vsearch-reason">${esc(result.reason||'')}</span>`;
+    }
+    seekTo(ts);
+    toast(`Found at ${fmt(ts)} (${pct}% confidence)`, 'success');
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Find'; }
+  }
+}
+
+// ── Burn Subtitles ────────────────────────────────────────────────────────
+
+async function burnSubtitles(style = 'default') {
+  if (!S.videoFile) { toast('No video file', 'error'); return; }
+  const caps = S.editData?._translatedCaptions || S.editData?.captions;
+  if (!caps?.length) { toast('No captions — run AI Edit first', 'error'); return; }
+
+  toast('Burning subtitles… this may take a moment', 'info');
+  const fd = new FormData();
+  fd.append('file', S.videoFile);
+  fd.append('captions', JSON.stringify(caps));
+  fd.append('style', style);
+
+  try {
+    const resp = await fetch(`${API}/api/burn-subtitles`, {method:'POST', body:fd});
+    if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail||'Burn failed'); }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${S.meta?.filename?.replace(/\.[^.]+$/,'')||'video'}_subtitled_${style}.mp4`;
+    a.click(); URL.revokeObjectURL(url);
+    toast('Subtitled video downloaded!', 'success');
+  } catch(e) {
+    toast(e.message || 'Burn failed', 'error');
+  }
+}
+
+// ── Highlight Reel ────────────────────────────────────────────────────────
+
+async function exportHighlightReel() {
+  if (!S.videoFile) { toast('No video file', 'error'); return; }
+  const btn = $('proc-btn-highlight');
+  const statusEl = $('proc-status-highlight');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="tool-spinner" style="width:12px;height:12px;border-color:rgba(255,255,255,.25);border-top-color:white;display:inline-block"></div> Processing…'; }
+  if (statusEl) statusEl.innerHTML = '<div class="proc-anim"><div class="tool-spinner" style="width:11px;height:11px;border-color:rgba(255,255,255,.2);border-top-color:var(--accent)"></div> Generating highlight reel…</div>';
+
+  const fd = new FormData();
+  fd.append('file', S.videoFile);
+  fd.append('edit_decisions', JSON.stringify(S.editData?.edit_decisions || []));
+  fd.append('color_grade', JSON.stringify(S.editData?.color_grade || {}));
+  fd.append('max_duration', '60');
+
+  try {
+    const resp = await fetch(`${API}/api/highlight-reel`, {method:'POST', body:fd});
+    if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail||'Failed'); }
+    const blob = await resp.blob();
+    const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${S.meta?.filename?.replace(/\.[^.]+$/,'')||'video'}_highlights.mp4`;
+    a.click(); URL.revokeObjectURL(url);
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--green);font-size:11.5px">✓ Downloaded (${sizeMB} MB)</span>`;
+    toast('Highlight reel ready!', 'success');
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<div style="color:var(--red);font-size:11.5px">✕ ${e.message}</div>`;
+    toast(e.message || 'Export failed', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '⚡ Generate Highlights'; }
+  }
+}
+
 const COPY_STORE = {};
 let _cpIdx = 0;
 function _store(text) { const k=`k${_cpIdx++}`; COPY_STORE[k]=text; return k; }
@@ -1592,6 +1769,10 @@ window.renderContentTab = renderContentTab;
 window.generateSocialContent = generateSocialContent;
 window.copyStored = copyStored;
 window.copyText = copyText;
+window.translateCaptions = translateCaptions;
+window.videoSearch = videoSearch;
+window.burnSubtitles = burnSubtitles;
+window.exportHighlightReel = exportHighlightReel;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();
