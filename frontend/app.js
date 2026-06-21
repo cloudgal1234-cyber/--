@@ -24,6 +24,24 @@ const S = {
   // Video Q&A chat
   vqaMsgs: [],          // [{role, content}] Anthropic messages format
   vqaStreaming: false,
+  // Data Studio
+  dataFile: null,
+  dataFileId: null,
+  dataAnalysis: null,
+  dataChatMsgs: [],
+  dataChatStreaming: false,
+  dataParsed: [],       // [{col: val}]
+  dataHeaders: [],
+  // Code Studio
+  codeFiles: [],        // [{name, content, lang}]
+  codeAnalysis: null,
+  codeChatMsgs: [],
+  codeChatStreaming: false,
+  // Live Vision
+  liveStream: null,
+  liveInterval: null,
+  liveFrameCount: 0,
+  liveRunning: false,
   // Audio Studio
   audioFile: null,
   audioBlobUrl: null,
@@ -62,6 +80,7 @@ const el = {
   newChatBtn: $('new-chat-btn'),
   chatSb: $('chat-sidebar'), videoSb: $('video-sidebar'), imgSb: $('img-sidebar'),
   audioSb: $('audio-sidebar'), docSb: $('doc-sidebar'),
+  dataSb: $('data-sidebar'), codeSb: $('code-sidebar'), liveSb: $('live-sidebar'),
   modeBtns: document.querySelectorAll('.mode-btn'),
   frameCount: $('frame-count'), frameCountLabel: $('frame-count-label'),
   sceneThresh: $('scene-thresh'), sceneThreshLabel: $('scene-thresh-label'),
@@ -69,6 +88,7 @@ const el = {
   // Views
   chatView: $('chat-view'), videoView: $('video-view'), imageView: $('image-view'),
   audioView: $('audio-view'), documentView: $('document-view'),
+  dataView: $('data-view'), codeView: $('code-view'), liveView: $('live-view'),
   // Video upload
   vUpload: $('v-upload'), vDrop: $('v-drop'),
   vPickBtn: $('v-pick-btn'), vFileInput: $('v-file-input'),
@@ -126,11 +146,17 @@ el.modeBtns.forEach(btn => btn.addEventListener('click', () => {
   el.imageView.classList.toggle('hidden', mode !== 'image');
   el.audioView.classList.toggle('hidden', mode !== 'audio');
   el.documentView.classList.toggle('hidden', mode !== 'document');
+  el.dataView.classList.toggle('hidden', mode !== 'data');
+  el.codeView.classList.toggle('hidden', mode !== 'code');
+  el.liveView.classList.toggle('hidden', mode !== 'live');
   el.chatSb.classList.toggle('hidden', mode !== 'chat');
   el.videoSb.classList.toggle('hidden', mode !== 'video');
   el.imgSb.classList.toggle('hidden', mode !== 'image');
   el.audioSb.classList.toggle('hidden', mode !== 'audio');
   el.docSb.classList.toggle('hidden', mode !== 'document');
+  el.dataSb.classList.toggle('hidden', mode !== 'data');
+  el.codeSb.classList.toggle('hidden', mode !== 'code');
+  el.liveSb.classList.toggle('hidden', mode !== 'live');
 }));
 
 // ── Sliders ────────────────────────────────────────────────────────────────
@@ -2092,6 +2118,589 @@ async function processVideoOp(operation) {
     if (btn) btn.innerHTML = '⚡ Process & Download';
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// DATA ANALYSIS STUDIO
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initDataStudio() {
+  const dataDrop   = $('data-drop');
+  const dataUpload = $('data-upload');
+  const dataPickBtn = $('data-pick-btn');
+  const dataFileInput = $('data-file-input');
+  const dataProcessing = $('data-processing');
+  const dataStudio  = $('data-studio');
+  const dataReanalBtn = $('data-reanalyze-btn');
+  const dataResetBtn  = $('data-reset-btn');
+
+  dataPickBtn.addEventListener('click', () => dataFileInput.click());
+  dataFileInput.addEventListener('change', e => { if (e.target.files[0]) loadDataFile(e.target.files[0]); e.target.value = ''; });
+  dataDrop.addEventListener('dragover', e => { e.preventDefault(); dataDrop.classList.add('drag-over'); });
+  dataDrop.addEventListener('dragleave', () => dataDrop.classList.remove('drag-over'));
+  dataDrop.addEventListener('drop', e => {
+    e.preventDefault(); dataDrop.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0]; if (f) loadDataFile(f);
+  });
+  dataReanalBtn.addEventListener('click', () => { if (S.dataFile) analyzeData(S.dataFile); });
+  dataResetBtn.addEventListener('click', resetDataStudio);
+
+  function resetDataStudio() {
+    S.dataFile=null; S.dataFileId=null; S.dataAnalysis=null;
+    S.dataChatMsgs=[]; S.dataChatStreaming=false; S.dataParsed=[]; S.dataHeaders=[];
+    dataUpload.classList.remove('hidden'); dataProcessing.classList.add('hidden'); dataStudio.classList.add('hidden');
+    $('data-chat-messages').innerHTML='';
+  }
+
+  window.loadDataFile = function(file) {
+    S.dataFile = file;
+    parseDataPreview(file);
+    analyzeData(file);
+  };
+
+  function parseDataPreview(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      const isJson = file.name.endsWith('.json');
+      if (isJson) {
+        try {
+          const arr = JSON.parse(text);
+          if (Array.isArray(arr) && arr.length) {
+            S.dataHeaders = Object.keys(arr[0]);
+            S.dataParsed = arr.slice(0, 100);
+          }
+        } catch { /* */ }
+      } else {
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        const sep = text.includes('\t') ? '\t' : ',';
+        S.dataHeaders = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g,''));
+        S.dataParsed = lines.slice(1, 101).map(l => {
+          const vals = l.split(sep).map(v => v.trim().replace(/^"|"$/g,''));
+          return Object.fromEntries(S.dataHeaders.map((h,i) => [h, vals[i]||'']));
+        });
+      }
+      renderDataPreview();
+    };
+    reader.readAsText(file);
+  }
+
+  function renderDataPreview() {
+    const el = $('data-preview-table');
+    if (!el || !S.dataHeaders.length) return;
+    const cols = S.dataHeaders.slice(0, 8);
+    const rows = S.dataParsed.slice(0, 10);
+    el.innerHTML = `<div style="overflow-x:auto"><table class="doc-data-table">
+      <thead><tr>${cols.map(h=>`<th>${esc(h)}</th>`).join('')}${S.dataHeaders.length>8?'<th>…</th>':''}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(String(r[c]??''))}</td>`).join('')}${S.dataHeaders.length>8?'<td>…</td>':''}</tr>`).join('')}</tbody>
+    </table></div><div style="font-size:11px;color:var(--text3);margin-top:6px">Showing ${rows.length} of ${S.dataParsed.length} loaded rows</div>`;
+  }
+
+  async function analyzeData(file) {
+    dataUpload.classList.add('hidden'); dataStudio.classList.add('hidden'); dataProcessing.classList.remove('hidden');
+    const model = $('data-model-select')?.value || 'claude-opus-4-8';
+    const question = $('data-question-input')?.value || '';
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('model', model);
+    if (question) fd.append('question', question);
+    try {
+      const resp = await fetch(`${API}/api/analyze-data`, {method:'POST', body:fd});
+      if (!resp.ok) { const e=await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail||'Failed'); }
+      const reader = resp.body.getReader(); const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim(); if (!raw||raw==='[DONE]') continue;
+          try { const evt=JSON.parse(raw); if(evt.type==='result'){S.dataAnalysis=evt.data;S.dataFileId=evt.file_id;} } catch { /* */ }
+        }
+      }
+      S.dataChatMsgs=[]; $('data-chat-messages').innerHTML='';
+      dataProcessing.classList.add('hidden'); dataStudio.classList.remove('hidden');
+      $('data-meta').innerHTML=`<span class="v-meta-item">📊 ${esc(file.name)}</span><span class="v-meta-item">${(file.size/1024).toFixed(0)} KB</span>`;
+      if (S.dataAnalysis) renderDataAnalysis(S.dataAnalysis);
+      renderDataPreview();
+    } catch(e) {
+      dataProcessing.classList.add('hidden'); dataUpload.classList.remove('hidden');
+      toast(e.message||'Data analysis failed','error');
+    }
+  }
+
+  function renderDataAnalysis(d) {
+    const titleEl = $('data-title-display');
+    if (titleEl) titleEl.textContent = d.title || 'Dataset Analysis';
+
+    const sumEl = $('data-summary-text');
+    if (sumEl) { sumEl.textContent = d.summary||''; sumEl.style.whiteSpace='pre-wrap'; }
+
+    // Quality score bar
+    const qEl = $('data-quality-bar');
+    if (qEl && d.data_quality_score != null) {
+      const pct = d.data_quality_score * 10;
+      const color = pct > 70 ? '#10b981' : pct > 40 ? '#f59e0b' : '#ef4444';
+      qEl.innerHTML = `<div style="display:flex;align-items:center;gap:10px;font-size:12px"><span style="color:var(--text3)">Data quality</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:9px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${color};border-radius:9px"></div></div><span style="color:${color};font-weight:700">${d.data_quality_score}/10</span></div>`;
+    }
+
+    // Insights
+    const insEl = $('data-insights');
+    if (insEl) insEl.innerHTML = (d.key_insights||[]).map((ins,i)=>`<div class="img-si-item"><span style="color:var(--accent);font-weight:700">${i+1}.</span> ${esc(ins)}</div>`).join('') || '—';
+
+    // Charts (Canvas-based bar/line charts)
+    const chartsEl = $('data-charts');
+    if (chartsEl) {
+      chartsEl.innerHTML = '';
+      (d.chart_suggestions||[]).slice(0,3).forEach((ch, ci) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'data-chart-item';
+        wrap.innerHTML = `<div class="data-chart-title">${esc(ch.title||`Chart ${ci+1}`)}</div><canvas id="dchart-${ci}" class="data-canvas" height="140"></canvas><div class="data-chart-insight">${esc(ch.insight||'')}</div>`;
+        chartsEl.appendChild(wrap);
+        setTimeout(() => drawChart(`dchart-${ci}`, ch, S.dataParsed, S.dataHeaders), 50);
+      });
+    }
+
+    // Correlations
+    const corrEl = $('data-correlations');
+    if (corrEl) corrEl.innerHTML = (d.correlations||[]).map(c=>{
+      const color = c.strength?.includes('positive') ? 'var(--green)' : c.strength?.includes('negative') ? 'var(--red)' : 'var(--text3)';
+      return `<div class="img-si-item"><span style="color:${color};font-weight:600">${esc(c.col_a)} ↔ ${esc(c.col_b)}</span>: ${esc(c.strength||'')}${c.note?` — ${esc(c.note)}`:''}</div>`;
+    }).join('') || '<span style="color:var(--text3)">No significant correlations found</span>';
+
+    // Anomalies + Trends
+    const anEl = $('data-anomalies');
+    if (anEl) {
+      const aItems = (d.anomalies||[]).map(a=>`<div class="img-si-item" style="color:var(--amber)">⚠ ${esc(a)}</div>`).join('');
+      const tItems = (d.trends||[]).map(t=>`<div class="img-si-item">📈 ${esc(t)}</div>`).join('');
+      anEl.innerHTML = (aItems+tItems) || '<span style="color:var(--text3)">None detected</span>';
+    }
+
+    // Columns
+    const colEl = $('data-columns');
+    if (colEl) colEl.innerHTML = `<div style="display:flex;gap:5px;flex-wrap:wrap">${(d.column_info||[]).map(c=>{
+      const typeColor = c.type==='numeric'?'var(--cyan)':c.type==='datetime'?'var(--amber)':c.type==='categorical'?'var(--purple)':'var(--text3)';
+      return `<div class="data-col-chip"><span style="font-weight:600">${esc(c.name)}</span><span style="color:${typeColor};font-size:10px">${c.type}</span>${c.nulls?`<span style="color:var(--red);font-size:9px">${c.nulls} nulls</span>`:''}</div>`;
+    }).join('')}</div>`;
+
+    // Stats
+    const statEl = $('data-stats');
+    if (statEl) {
+      const numStats = (d.statistics?.numeric_columns||[]).map(s=>
+        `<div class="img-si-item"><strong>${esc(s.column)}</strong>: min ${s.min} · max ${s.max} · mean ${typeof s.mean==='number'?s.mean.toFixed(2):s.mean} · σ ${typeof s.std==='number'?s.std.toFixed(2):s.std}</div>`
+      ).join('');
+      const catStats = (d.statistics?.categorical_columns||[]).map(s=>
+        `<div class="img-si-item"><strong>${esc(s.column)}</strong>: ${s.unique_count} unique — top: ${(s.top_values||[]).slice(0,3).map(v=>`${esc(String(v.value))} (${v.count})`).join(', ')}</div>`
+      ).join('');
+      statEl.innerHTML = (numStats+catStats) || '<span style="color:var(--text3)">—</span>';
+    }
+
+    // Recommendations
+    const recEl = $('data-recs');
+    if (recEl) recEl.innerHTML = (d.recommendations||[]).map(r=>{
+      const pColor = r.priority==='high'?'var(--red)':r.priority==='medium'?'var(--amber)':'var(--green)';
+      return `<div class="img-si-item"><span class="code-badge-small" style="background:${pColor}20;color:${pColor}">${r.priority}</span> <strong>${esc(r.action||'')}</strong> — ${esc(r.reason||'')}`;
+    }).join('') || '—';
+  }
+
+  function drawChart(canvasId, ch, data, headers) {
+    const canvas = $(canvasId);
+    if (!canvas || !data.length) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.offsetWidth || 400; canvas.width = w;
+    const h = 140, pad = 32;
+    ctx.fillStyle = '#0a0a14'; ctx.fillRect(0,0,w,h);
+
+    if (ch.type === 'bar' && ch.x && ch.y) {
+      const xVals = data.slice(0,12).map(r=>String(r[ch.x]||''));
+      const yVals = data.slice(0,12).map(r=>parseFloat(r[ch.y])||0);
+      const maxY = Math.max(...yVals, 1);
+      const barW = (w - pad*2) / xVals.length - 4;
+      yVals.forEach((v,i) => {
+        const barH = ((v/maxY) * (h - pad - 12));
+        const x = pad + i * ((w-pad*2)/xVals.length);
+        const grad = ctx.createLinearGradient(0,h-pad-barH,0,h-pad);
+        grad.addColorStop(0,'#7c3aed'); grad.addColorStop(1,'#2563eb');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, h-pad-barH, barW, barH);
+      });
+      ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+      xVals.forEach((v,i) => { ctx.fillText(v.slice(0,8), pad + i*((w-pad*2)/xVals.length)+barW/2, h-6); });
+    } else if (ch.type === 'line' && ch.x && ch.y) {
+      const yVals = data.slice(0,30).map(r=>parseFloat(r[ch.y])||0);
+      const maxY = Math.max(...yVals,1), minY = Math.min(...yVals,0);
+      const range = maxY - minY || 1;
+      const step = (w-pad*2) / (yVals.length-1||1);
+      ctx.strokeStyle='#10b981'; ctx.lineWidth=2; ctx.beginPath();
+      yVals.forEach((v,i) => {
+        const x = pad + i*step, y = (h-pad) - ((v-minY)/range*(h-pad-12));
+        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+    } else {
+      ctx.fillStyle='rgba(255,255,255,.3)'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+      ctx.fillText(`${ch.type} chart: ${ch.x||''} vs ${ch.y||''}`, w/2, h/2);
+    }
+  }
+
+  // Q&A
+  window.sendDataChat = async function() {
+    const input = $('data-chat-input');
+    const text = input?.value.trim();
+    if (!text || S.dataChatStreaming) return;
+    if (!S.dataFileId) { toast('No data loaded','error'); return; }
+    input.value = '';
+    S.dataChatMsgs.push({role:'user', content:text});
+    const chatEl = $('data-chat-messages');
+    chatEl.innerHTML += `<div class="img-chat-msg img-chat-user"><div class="img-chat-bubble">${esc(text)}</div></div>`;
+    const aiBubble = document.createElement('div');
+    aiBubble.className='img-chat-msg img-chat-ai';
+    aiBubble.innerHTML='<div class="img-chat-bubble"><div class="tool-spinner" style="width:14px;height:14px;display:inline-block"></div></div>';
+    chatEl.appendChild(aiBubble); chatEl.scrollTop=chatEl.scrollHeight;
+    S.dataChatStreaming=true;
+    const model=$('data-model-select')?.value||'claude-opus-4-8';
+    const fd=new FormData(); fd.append('file_id',S.dataFileId); fd.append('messages',JSON.stringify(S.dataChatMsgs)); fd.append('model',model);
+    try {
+      const resp=await fetch(`${API}/api/data-chat`,{method:'POST',body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail||resp.statusText);
+      const reader=resp.body.getReader(); const dec=new TextDecoder();
+      let buf='', fullText='';
+      const bubble=aiBubble.querySelector('.img-chat-bubble'); bubble.innerHTML='';
+      while(true){
+        const {done,value}=await reader.read(); if(done) break;
+        buf+=dec.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          const raw=line.slice(6).trim(); if(!raw||raw==='[DONE]') continue;
+          try{const evt=JSON.parse(raw);if(evt.type==='text'&&evt.text){fullText+=evt.text;bubble.innerHTML=md(fullText);chatEl.scrollTop=chatEl.scrollHeight;}}catch{/**/}
+        }
+      }
+      S.dataChatMsgs.push({role:'assistant',content:fullText});
+    } catch(e){aiBubble.querySelector('.img-chat-bubble').textContent='⚠ '+e.message;}
+    finally{S.dataChatStreaming=false;chatEl.scrollTop=chatEl.scrollHeight;}
+  };
+})();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// CODE INTELLIGENCE STUDIO
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initCodeStudio() {
+  const codeUpload=  $('code-upload');
+  const codePickBtn= $('code-pick-btn');
+  const codeFileInput=$('code-file-input');
+  const codeDrop=$('code-drop');
+  const codeProcessing=$('code-processing');
+  const codeStudio=$('code-studio');
+  const codeReanalBtn=$('code-reanalyze-btn');
+  const codeResetBtn=$('code-reset-btn');
+
+  codePickBtn.addEventListener('click',()=>codeFileInput.click());
+  codeFileInput.addEventListener('change', async e=>{
+    if(e.target.files.length) await loadCodeFiles(Array.from(e.target.files));
+    e.target.value='';
+  });
+  codeDrop.addEventListener('dragover',e=>{e.preventDefault();codeDrop.classList.add('drag-over');});
+  codeDrop.addEventListener('dragleave',()=>codeDrop.classList.remove('drag-over'));
+  codeDrop.addEventListener('drop',async e=>{
+    e.preventDefault();codeDrop.classList.remove('drag-over');
+    if(e.dataTransfer.files.length) await loadCodeFiles(Array.from(e.dataTransfer.files).slice(0,10));
+  });
+  codeReanalBtn.addEventListener('click',()=>{if(S.codeFiles.length) analyzeCode();});
+  codeResetBtn.addEventListener('click',resetCodeStudio);
+
+  function resetCodeStudio(){
+    S.codeFiles=[]; S.codeAnalysis=null; S.codeChatMsgs=[]; S.codeChatStreaming=false;
+    codeUpload.classList.remove('hidden'); codeProcessing.classList.add('hidden'); codeStudio.classList.add('hidden');
+    $('code-chat-messages').innerHTML='';
+  }
+
+  window.loadCodeFiles = async function(files) {
+    S.codeFiles=[];
+    for(const f of files.slice(0,10)){
+      const text = await f.text().catch(()=>'// could not read');
+      const lang = f.name.match(/\.([^.]+)$/)?.[1] || 'txt';
+      S.codeFiles.push({name:f.name, content:text, lang, file:f});
+    }
+    analyzeCode();
+  };
+
+  async function analyzeCode(){
+    codeUpload.classList.add('hidden'); codeStudio.classList.add('hidden'); codeProcessing.classList.remove('hidden');
+    const model=$('code-model-select')?.value||'claude-opus-4-8';
+    const context=$('code-context-input')?.value||'';
+    const fd=new FormData();
+    S.codeFiles.forEach(f=>fd.append('files',f.file));
+    fd.append('model',model);
+    if(context) fd.append('context',context);
+    try{
+      const resp=await fetch(`${API}/api/analyze-code`,{method:'POST',body:fd});
+      if(!resp.ok){const e=await resp.json().catch(()=>({detail:resp.statusText}));throw new Error(e.detail||'Failed');}
+      const reader=resp.body.getReader(); const dec=new TextDecoder();
+      let buf='';
+      while(true){
+        const {done,value}=await reader.read(); if(done) break;
+        buf+=dec.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          const raw=line.slice(6).trim(); if(!raw||raw==='[DONE]') continue;
+          try{const evt=JSON.parse(raw);if(evt.type==='result') S.codeAnalysis=evt.data;}catch{/**/}
+        }
+      }
+      S.codeChatMsgs=[]; $('code-chat-messages').innerHTML='';
+      codeProcessing.classList.add('hidden'); codeStudio.classList.remove('hidden');
+      const names=S.codeFiles.map(f=>f.name).join(', ');
+      const totalLines=S.codeFiles.reduce((s,f)=>s+f.content.split('\n').length,0);
+      $('code-meta').innerHTML=`<span class="v-meta-item">📁 ${esc(names)}</span><span class="v-meta-item">${totalLines} lines</span>`;
+      renderCodeViewer();
+      if(S.codeAnalysis) renderCodeAnalysis(S.codeAnalysis);
+    }catch(e){
+      codeProcessing.classList.add('hidden'); codeUpload.classList.remove('hidden');
+      toast(e.message||'Code analysis failed','error');
+    }
+  }
+
+  function renderCodeViewer(){
+    const el=$('code-file-viewer'); if(!el||!S.codeFiles.length) return;
+    const tabs=S.codeFiles.map((f,i)=>`<button class="doc-tab${i===0?' active':''}" onclick="switchCodeFile(${i})">${esc(f.name)}</button>`).join('');
+    const panels=S.codeFiles.map((f,i)=>{
+      let hi; try{hi=hljs.highlight(f.content,{language:f.lang}).value;}catch{hi=f.content.replace(/</g,'&lt;');}
+      return `<div class="code-file-panel${i===0?'':' hidden'}" id="cfpanel-${i}"><pre style="margin:0;padding:12px 16px;overflow-x:auto;max-height:300px"><code class="hljs">${hi}</code></pre></div>`;
+    }).join('');
+    el.innerHTML=`<div class="doc-tabs" style="padding:0 18px;margin-bottom:0">${tabs}</div>${panels}`;
+  }
+
+  window.switchCodeFile=function(i){
+    document.querySelectorAll('.code-file-panel').forEach((p,j)=>p.classList.toggle('hidden',j!==i));
+    document.querySelectorAll('#code-file-viewer .doc-tab').forEach((b,j)=>b.classList.toggle('active',j===i));
+  };
+
+  function sev(s){const m={critical:'var(--red)',high:'var(--red)',medium:'var(--amber)',low:'var(--green)'}; return m[s]||'var(--text3)';}
+
+  function renderCodeAnalysis(d){
+    // Grade
+    const grEl=$('code-grade-display');
+    if(grEl){
+      const g=d.grade||'?'; const score=d.overall_score??0;
+      const gColor=g==='A'?'#10b981':g==='B'?'#22d3ee':g==='C'?'#f59e0b':g==='D'?'#f97316':'#ef4444';
+      grEl.innerHTML=`<div style="display:flex;align-items:center;gap:16px"><div style="font-size:48px;font-weight:900;color:${gColor};line-height:1">${esc(g)}</div><div><div style="font-size:13px;color:var(--text3)">${esc(d.language||'')}${d.framework?` · ${esc(d.framework)}`:''}</div><div style="font-size:22px;font-weight:700;color:var(--text)">${score}/10</div><div style="font-size:11.5px;color:var(--text3)">${esc(d.complexity||'')} · ${d.lines_of_code||0} lines</div></div></div>`;
+    }
+    const langChips=$('code-lang-chips');
+    if(langChips) langChips.innerHTML=(d.dependencies||[]).slice(0,8).map(dep=>`<span class="img-tag img-tag-sm">${esc(dep)}</span>`).join('');
+    const sumEl=$('code-summary-text'); if(sumEl){sumEl.textContent=d.summary||''; sumEl.style.whiteSpace='pre-wrap';}
+
+    // Bugs
+    const bugs=d.bugs||[];
+    const bugEl=$('code-bugs'); const bugCnt=$('bug-count');
+    if(bugCnt) bugCnt.textContent=bugs.length||'';
+    if(bugEl) bugEl.innerHTML=bugs.length?bugs.map(b=>`<div class="code-issue-item"><div style="display:flex;gap:6px;align-items:center"><span class="code-badge-small" style="color:${sev(b.severity)}">${esc(b.severity)}</span><code style="font-size:11px;color:var(--text3)">line ${esc(String(b.line||'?'))}</code></div><div class="img-si-item">${esc(b.description||'')}</div>${b.fix?`<div class="code-fix-hint">Fix: ${esc(b.fix)}</div>`:''}</div>`).join(''):'<span style="color:var(--green)">✓ No bugs detected</span>';
+
+    // Security
+    const sec=d.security_issues||[];
+    const secEl=$('code-security'); const secCnt=$('sec-count');
+    if(secCnt) secCnt.textContent=sec.length||'';
+    if(secEl) secEl.innerHTML=sec.length?sec.map(s=>`<div class="code-issue-item"><div style="display:flex;gap:6px;align-items:center"><span class="code-badge-small" style="color:${sev(s.severity)}">${esc(s.severity)}</span><span style="font-size:11px;color:var(--amber)">${esc(s.type||'')}</span></div><div class="img-si-item">${esc(s.description||'')}</div>${s.fix?`<div class="code-fix-hint">Fix: ${esc(s.fix)}</div>`:''}</div>`).join(''):'<span style="color:var(--green)">✓ No security issues found</span>';
+
+    // Performance
+    const perfEl=$('code-performance');
+    if(perfEl) perfEl.innerHTML=(d.performance_issues||[]).map(p=>`<div class="img-si-item">⚡ ${esc(p.description||'')}${p.suggestion?` → <em>${esc(p.suggestion)}</em>`:''}</div>`).join('')||'<span style="color:var(--green)">✓ No performance issues</span>';
+
+    // Refactoring
+    const refs=d.refactoring_suggestions||[];
+    const refEl=$('code-refactor'); const refCnt=$('ref-count');
+    if(refCnt) refCnt.textContent=refs.length||'';
+    if(refEl) refEl.innerHTML=refs.map(r=>`<div class="img-si-item"><span class="code-badge-small" style="color:${sev(r.priority)}">${esc(r.priority)}</span> ${esc(r.description||'')}${r.reason?` <span style="color:var(--text3)">— ${esc(r.reason)}</span>`:''}</div>`).join('')||'<span style="color:var(--text3)">No refactoring needed</span>';
+
+    // Tests
+    const testEl=$('code-tests');
+    if(testEl){
+      const missing=d.missing_tests||[];
+      testEl.innerHTML=`<div class="img-si-item">Coverage: <strong>${esc(d.test_coverage_assessment||'Unknown')}</strong></div>`+(missing.map(t=>`<div class="img-si-item" style="color:var(--amber)">✗ ${esc(t)}</div>`).join(''));
+    }
+
+    // Best practices
+    const pracEl=$('code-practices');
+    if(pracEl){
+      const good=(d.best_practices?.followed||[]).map(p=>`<div class="img-si-item" style="color:var(--green)">✓ ${esc(p)}</div>`).join('');
+      const bad=(d.best_practices?.violated||[]).map(p=>`<div class="img-si-item" style="color:var(--amber)">✗ ${esc(p)}</div>`).join('');
+      pracEl.innerHTML=(good+bad)||'—';
+    }
+
+    // PR summary
+    const prEl=$('code-pr-summary'); if(prEl){prEl.textContent=d.summary_for_pr||''; prEl.style.whiteSpace='pre-wrap';}
+  }
+
+  // Q&A
+  window.sendCodeChat = async function(){
+    const input=$('code-chat-input');
+    const text=input?.value.trim();
+    if(!text||S.codeChatStreaming) return;
+    if(!S.codeFiles.length){toast('No code loaded','error');return;}
+    input.value='';
+    S.codeChatMsgs.push({role:'user',content:text});
+    const chatEl=$('code-chat-messages');
+    chatEl.innerHTML+=`<div class="img-chat-msg img-chat-user"><div class="img-chat-bubble">${esc(text)}</div></div>`;
+    const aiBubble=document.createElement('div');
+    aiBubble.className='img-chat-msg img-chat-ai';
+    aiBubble.innerHTML='<div class="img-chat-bubble"><div class="tool-spinner" style="width:14px;height:14px;display:inline-block"></div></div>';
+    chatEl.appendChild(aiBubble); chatEl.scrollTop=chatEl.scrollHeight;
+    S.codeChatStreaming=true;
+    const model=$('code-model-select')?.value||'claude-opus-4-8';
+    const codeContext=S.codeFiles.map(f=>`### ${f.name}\n\`\`\`${f.lang}\n${f.content.slice(0,3000)}\n\`\`\``).join('\n\n');
+    const fd=new FormData(); fd.append('code_context',codeContext); fd.append('messages',JSON.stringify(S.codeChatMsgs)); fd.append('model',model);
+    try{
+      const resp=await fetch(`${API}/api/code-chat`,{method:'POST',body:fd});
+      if(!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail||resp.statusText);
+      const reader=resp.body.getReader(); const dec=new TextDecoder();
+      let buf='',fullText='';
+      const bubble=aiBubble.querySelector('.img-chat-bubble'); bubble.innerHTML='';
+      while(true){
+        const {done,value}=await reader.read(); if(done) break;
+        buf+=dec.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          const raw=line.slice(6).trim(); if(!raw||raw==='[DONE]') continue;
+          try{const evt=JSON.parse(raw);if(evt.type==='text'&&evt.text){fullText+=evt.text;bubble.innerHTML=md(fullText);hljs.highlightAll();chatEl.scrollTop=chatEl.scrollHeight;}}catch{/**/}
+        }
+      }
+      S.codeChatMsgs.push({role:'assistant',content:fullText});
+    }catch(e){aiBubble.querySelector('.img-chat-bubble').textContent='⚠ '+e.message;}
+    finally{S.codeChatStreaming=false;chatEl.scrollTop=chatEl.scrollHeight;}
+  };
+})();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIVE VISION
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initLiveVision() {
+  const liveVideo   = $('live-video');
+  const liveCanvas  = $('live-capture-canvas');
+  const liveStartBtn= $('live-start-btn');
+  const liveStopBtn = $('live-stop-btn');
+  const liveSnapBtn = $('live-snap-btn');
+  const liveDot     = $('live-dot');
+  const liveStatusTxt = $('live-status-text');
+  const liveAnalyzingBadge = $('live-analyzing-badge');
+  const liveFeed    = $('live-analysis-feed');
+  const liveFrameCountEl = $('live-frame-count');
+  const liveIntervalSlider = $('live-interval');
+  const liveIntervalLabel  = $('live-interval-label');
+
+  if (liveIntervalSlider) {
+    liveIntervalSlider.addEventListener('input', () => {
+      if(liveIntervalLabel) liveIntervalLabel.textContent = liveIntervalSlider.value + 's';
+    });
+  }
+
+  liveAnalyzingBadge?.classList.add('hidden');
+
+  async function openCamera() {
+    try {
+      S.liveStream = await navigator.mediaDevices.getUserMedia({video:{width:1280,height:720},audio:false});
+      liveVideo.srcObject = S.liveStream;
+      liveStartBtn.classList.add('hidden');
+      liveStopBtn.classList.remove('hidden');
+      liveSnapBtn.disabled = false;
+      if(liveDot){liveDot.classList.add('live-dot-active');}
+      if(liveStatusTxt) liveStatusTxt.textContent = 'Camera on — starting analysis…';
+      startLiveLoop();
+    } catch(e) { toast('Camera access denied: '+e.message,'error'); }
+  }
+
+  function stopCamera() {
+    S.liveRunning = false;
+    clearInterval(S.liveInterval);
+    S.liveInterval = null;
+    if(S.liveStream){S.liveStream.getTracks().forEach(t=>t.stop()); S.liveStream=null;}
+    liveVideo.srcObject = null;
+    liveStartBtn.classList.remove('hidden');
+    liveStopBtn.classList.add('hidden');
+    liveSnapBtn.disabled = true;
+    if(liveDot) liveDot.classList.remove('live-dot-active');
+    if(liveStatusTxt) liveStatusTxt.textContent = 'Camera off';
+    liveAnalyzingBadge?.classList.add('hidden');
+  }
+
+  function startLiveLoop() {
+    S.liveRunning = true;
+    S.liveFrameCount = 0;
+    const intervalSec = parseInt($('live-interval')?.value || '4', 10);
+    captureAndAnalyze();
+    S.liveInterval = setInterval(captureAndAnalyze, intervalSec * 1000);
+  }
+
+  async function captureAndAnalyze() {
+    if (!S.liveRunning || !S.liveStream) return;
+    const blob = await captureFrame();
+    if (!blob) return;
+    liveAnalyzingBadge?.classList.remove('hidden');
+    const focus = $('live-focus-input')?.value || '';
+    const model = $('live-model-select')?.value || 'claude-haiku-4-5-20251001';
+    S.liveFrameCount++;
+    const ts = new Date().toLocaleTimeString();
+    if(liveFrameCountEl) liveFrameCountEl.textContent = `${S.liveFrameCount} frame${S.liveFrameCount!==1?'s':''} analyzed`;
+
+    // Add frame thumbnail to history
+    const histEl = $('live-frame-history');
+    const imgUrl = URL.createObjectURL(blob);
+    const thumb = document.createElement('div');
+    thumb.className = 'live-thumb'; thumb.id = `lthumb-${S.liveFrameCount}`;
+    thumb.innerHTML = `<img src="${imgUrl}" alt="Frame ${S.liveFrameCount}"/><span>#${S.liveFrameCount}</span>`;
+    histEl?.prepend(thumb);
+    if (histEl && histEl.children.length > 8) histEl.lastElementChild?.remove();
+
+    // Add analysis entry
+    const entry = document.createElement('div');
+    entry.className = 'live-entry'; entry.id = `lentry-${S.liveFrameCount}`;
+    entry.innerHTML = `<div class="live-entry-header"><span class="live-entry-num">#${S.liveFrameCount}</span><span class="live-entry-ts">${ts}</span><div class="tool-spinner" style="width:10px;height:10px;margin-left:auto"></div></div><div class="live-entry-text" id="letxt-${S.liveFrameCount}"></div>`;
+    liveFeed?.prepend(entry);
+
+    // Stream analysis
+    const fd = new FormData();
+    fd.append('file', blob, 'frame.jpg');
+    fd.append('model', model);
+    if (focus) fd.append('context', focus);
+    try {
+      const resp = await fetch(`${API}/api/live-frame`, {method:'POST',body:fd});
+      if (!resp.ok) throw new Error(resp.statusText);
+      const reader = resp.body.getReader(); const dec = new TextDecoder();
+      let buf='', txt='';
+      const txtEl = $(`letxt-${S.liveFrameCount}`);
+      while(true){
+        const {done,value}=await reader.read(); if(done) break;
+        buf+=dec.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          const raw=line.slice(6).trim(); if(!raw||raw==='[DONE]') continue;
+          try{const evt=JSON.parse(raw);if(evt.type==='text'){txt+=evt.text;if(txtEl)txtEl.textContent=txt;}}catch{/**/}
+        }
+      }
+      entry.querySelector('.tool-spinner')?.remove();
+    } catch(e) { entry.querySelector('.tool-spinner')?.remove(); }
+    liveAnalyzingBadge?.classList.add('hidden');
+    if(liveStatusTxt) liveStatusTxt.textContent = `Analyzing every ${$('live-interval')?.value||4}s…`;
+  }
+
+  async function captureFrame() {
+    if (!liveVideo.videoWidth) return null;
+    liveCanvas.width = liveVideo.videoWidth;
+    liveCanvas.height = liveVideo.videoHeight;
+    liveCanvas.getContext('2d').drawImage(liveVideo, 0, 0);
+    return new Promise(res => liveCanvas.toBlob(res, 'image/jpeg', 0.85));
+  }
+
+  liveStartBtn?.addEventListener('click', openCamera);
+  liveStopBtn?.addEventListener('click', stopCamera);
+  liveSnapBtn?.addEventListener('click', captureAndAnalyze);
+})();
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // AUDIO INTELLIGENCE STUDIO

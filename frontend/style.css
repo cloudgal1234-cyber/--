@@ -695,6 +695,123 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
 .voiceover-block .md-output p{margin-bottom:8px}
 
 /* ════════════════════════════════════════════════════════
+   DATA ANALYSIS STUDIO
+   ════════════════════════════════════════════════════════ */
+
+.data-studio{display:flex;flex-direction:column;height:100%;overflow:auto}
+.data-workspace{
+  display:grid;grid-template-columns:1fr 360px;gap:16px;
+  padding:16px 18px;flex:1;overflow:auto;align-items:start;
+}
+@media(max-width:900px){.data-workspace{grid-template-columns:1fr}}
+.data-left-col,.data-right-col{display:flex;flex-direction:column;gap:12px}
+
+.data-hero-card{
+  background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(16,185,129,.06));
+  border-color:rgba(245,158,11,.25);
+}
+.data-charts-wrap{display:flex;flex-direction:column;gap:14px}
+.data-chart-item{background:var(--bg3);border-radius:var(--r2);padding:10px 12px}
+.data-chart-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.data-canvas{width:100%;display:block;border-radius:var(--r2)}
+.data-chart-insight{font-size:11px;color:var(--text3);margin-top:5px;font-style:italic;line-height:1.4}
+
+.data-col-chip{
+  background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);
+  padding:4px 9px;display:flex;flex-direction:column;gap:1px;font-size:12px;
+}
+.data-preview-wrap{overflow-x:auto;max-height:260px;overflow-y:auto}
+.data-preview-wrap::-webkit-scrollbar{width:3px;height:3px}
+.data-preview-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:9px}
+
+.code-badge-small{
+  font-size:10px;padding:1px 6px;border-radius:99px;
+  border:1px solid currentColor;display:inline-block;
+}
+.code-badge-red{font-size:10px;color:var(--red);font-weight:700;margin-left:4px}
+.code-badge-amber{font-size:10px;color:var(--amber);font-weight:700;margin-left:4px}
+
+/* ════════════════════════════════════════════════════════
+   CODE INTELLIGENCE STUDIO
+   ════════════════════════════════════════════════════════ */
+
+.code-studio{display:flex;flex-direction:column;height:100%;overflow:auto}
+.code-workspace{
+  display:grid;grid-template-columns:1fr 1fr;gap:16px;
+  padding:16px 18px;align-items:start;
+}
+@media(max-width:900px){.code-workspace{grid-template-columns:1fr}}
+.code-left-col,.code-right-col{display:flex;flex-direction:column;gap:12px}
+
+.code-grade-card{
+  background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(59,130,246,.06));
+  border-color:rgba(139,92,246,.25);
+}
+.code-grade-display{margin-bottom:8px}
+.code-issue-item{
+  background:var(--bg3);border-radius:var(--r2);padding:8px 10px;
+  margin-bottom:6px;border-left:3px solid var(--border2);
+}
+.code-fix-hint{font-size:11.5px;color:var(--green);margin-top:4px;font-family:'JetBrains Mono',monospace;line-height:1.4}
+.code-file-viewer{
+  border-top:1px solid var(--border);background:var(--bg);flex-shrink:0;
+}
+.code-file-panel{background:var(--bg)}
+
+/* ════════════════════════════════════════════════════════
+   LIVE VISION
+   ════════════════════════════════════════════════════════ */
+
+.live-layout{
+  display:grid;grid-template-columns:520px 1fr;height:calc(100vh - 56px);overflow:hidden;
+}
+@media(max-width:900px){.live-layout{grid-template-columns:1fr;height:auto}}
+.live-cam-col{display:flex;flex-direction:column;gap:10px;padding:16px;border-right:1px solid var(--border);overflow-y:auto}
+.live-analysis-col{display:flex;flex-direction:column;overflow:hidden}
+
+.live-cam-wrap{position:relative;border-radius:var(--r);overflow:hidden;background:#000;flex-shrink:0}
+.live-video{width:100%;display:block;border-radius:var(--r);max-height:340px;object-fit:cover}
+.live-status-bar{
+  position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(transparent,rgba(0,0,0,.8));
+  padding:10px 12px;display:flex;align-items:center;gap:8px;
+}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:background .3s}
+.live-dot.live-dot-active{background:#ef4444;box-shadow:0 0 0 4px rgba(239,68,68,.25);animation:pulse-live 1.5s infinite}
+@keyframes pulse-live{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 6px rgba(239,68,68,.0)}}
+.live-controls{display:flex;gap:8px;flex-wrap:wrap}
+.live-frame-history{display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;padding:4px 0}
+.live-frame-history::-webkit-scrollbar{height:3px}
+.live-frame-history::-webkit-scrollbar-thumb{background:var(--border2);border-radius:9px}
+.live-thumb{flex-shrink:0;width:72px;height:42px;border-radius:var(--r2);overflow:hidden;position:relative;border:1px solid var(--border)}
+.live-thumb img{width:100%;height:100%;object-fit:cover}
+.live-thumb span{position:absolute;bottom:2px;right:4px;font-size:9px;color:rgba(255,255,255,.7);font-family:'JetBrains Mono',monospace}
+
+.live-feed-header{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;
+  border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;
+}
+.live-badge{
+  display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  color:var(--green);background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25);
+  border-radius:99px;padding:3px 10px;
+}
+.live-analysis-feed{
+  flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;
+}
+.live-analysis-feed::-webkit-scrollbar{width:3px}
+.live-analysis-feed::-webkit-scrollbar-thumb{background:var(--border2);border-radius:9px}
+.live-entry{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);
+  padding:10px 13px;animation:fadeIn .3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.live-entry-header{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.live-entry-num{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);font-weight:700}
+.live-entry-ts{font-size:10.5px;color:var(--text3)}
+.live-entry-text{font-size:13px;color:var(--text2);line-height:1.55}
+
+/* ════════════════════════════════════════════════════════
    AUDIO INTELLIGENCE STUDIO
    ════════════════════════════════════════════════════════ */
 

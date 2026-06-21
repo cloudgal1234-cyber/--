@@ -1920,4 +1920,328 @@ Be specific and direct. Reference each image by its number."""})
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# LIVE VISION — fast frame-by-frame webcam analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/live-frame")
+async def live_frame(
+    file: UploadFile = File(...),
+    context: str = Form(""),
+    model: str = Form("claude-haiku-4-5-20251001"),
+):
+    content = await file.read()
+    if len(content) > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Frame too large")
+    media_type = file.content_type or "image/jpeg"
+    prompt = (
+        "Describe what you see in this webcam frame in 1-2 concise sentences. "
+        "Focus on: main subject, action, notable objects, people, text visible. "
+        "Be direct and specific. No preamble."
+    )
+    if context:
+        prompt += f"\n\nUser focus: {context}"
+
+    async def _stream():
+        try:
+            img_data = base64.standard_b64encode(content).decode("utf-8")
+            with client.messages.stream(
+                model=model,
+                max_tokens=300,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            ) as s:
+                for ev in s:
+                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA ANALYSIS STUDIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+DATA_ANALYSIS_PROMPT = """You are a world-class data scientist and analyst. Analyze this dataset and return ONLY this JSON (no markdown fences):
+
+{
+  "title": "Inferred dataset title",
+  "rows": 0,
+  "columns": 0,
+  "column_info": [
+    {"name": "col", "type": "numeric|categorical|datetime|text|boolean", "nulls": 0, "unique": 5, "sample_values": ["a","b"]}
+  ],
+  "summary": "2-3 sentence overview of what this dataset represents and its key characteristics",
+  "key_insights": [
+    "Specific data-driven insight with numbers",
+    "Another concrete finding",
+    "Third insight"
+  ],
+  "statistics": {
+    "numeric_columns": [
+      {"column": "col_name", "min": 0, "max": 100, "mean": 50, "median": 48, "std": 12, "zeros_pct": 0}
+    ],
+    "categorical_columns": [
+      {"column": "col_name", "top_values": [{"value": "A", "count": 100}, {"value": "B", "count": 80}], "unique_count": 5}
+    ]
+  },
+  "correlations": [
+    {"col_a": "col1", "col_b": "col2", "strength": "strong_positive|moderate_positive|weak|moderate_negative|strong_negative", "note": "explanation"}
+  ],
+  "anomalies": ["Any outliers, data quality issues, or anomalies detected"],
+  "trends": ["Any time-based or sequential trends visible"],
+  "recommendations": [
+    {"action": "What to do", "reason": "Why", "priority": "high|medium|low"}
+  ],
+  "chart_suggestions": [
+    {"type": "bar|line|scatter|pie|histogram", "x": "column_name", "y": "column_name", "title": "Chart title", "insight": "what this chart would reveal"}
+  ],
+  "questions_to_explore": ["What other analysis would be valuable?"],
+  "data_quality_score": 8
+}"""
+
+
+@app.post("/api/analyze-data")
+async def analyze_data(
+    file: UploadFile = File(...),
+    model: str = Form("claude-opus-4-8"),
+    question: str = Form(""),
+):
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+
+    text = content.decode("utf-8", errors="replace")
+    media_type = file.content_type or "text/plain"
+    prompt = DATA_ANALYSIS_PROMPT
+    if question:
+        prompt += f"\n\nSpecific question to answer: {question}"
+
+    # Upload as document
+    try:
+        uploaded = client.beta.files.upload(
+            file=(file.filename or "data.csv", content, "text/plain")
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    file_id = uploaded.id
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=5000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": [
+                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                    {"type": "text", "text": prompt},
+                ]}],
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type':'result','data':parsed,'file_id':file_id})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        finally:
+            try: client.beta.files.delete(file_id)
+            except Exception: pass
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/data-chat")
+async def data_chat(
+    file_id: str = Form(...),
+    messages: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    try:
+        msgs = json.loads(messages)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid messages JSON")
+    first_user = next((m for m in msgs if m["role"] == "user"), None)
+    if first_user and file_id:
+        content = first_user.get("content", "")
+        if isinstance(content, str):
+            first_user["content"] = [
+                {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                {"type": "text", "text": content},
+            ]
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model, max_tokens=3000, thinking={"type": "adaptive"},
+                system="You are an expert data scientist. Answer questions about the provided dataset precisely, with statistics and specific values when available.",
+                messages=msgs, betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
+                    elif type(ev).__name__ == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+        headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CODE INTELLIGENCE STUDIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+CODE_ANALYSIS_PROMPT = """You are a world-class software engineer and code reviewer. Analyze the provided code and return ONLY this JSON:
+
+{
+  "language": "Python|JavaScript|TypeScript|Go|Rust|Java|C++|other",
+  "framework": "detected framework or null",
+  "lines_of_code": 0,
+  "complexity": "simple|moderate|complex|very_complex",
+  "summary": "2-3 sentence description of what this code does",
+  "architecture_notes": "Key architectural patterns, design choices",
+  "bugs": [
+    {"severity": "critical|high|medium|low", "line": "line number or range", "description": "what the bug is", "fix": "exact fix code or suggestion"}
+  ],
+  "security_issues": [
+    {"severity": "critical|high|medium|low", "type": "SQL injection|XSS|...", "line": "line", "description": "issue", "fix": "fix"}
+  ],
+  "performance_issues": [
+    {"description": "issue", "line": "line", "suggestion": "optimization"}
+  ],
+  "code_smells": [
+    {"type": "long function|duplicate code|god class|...", "description": "detail", "line": "line"}
+  ],
+  "refactoring_suggestions": [
+    {"priority": "high|medium|low", "description": "what to refactor", "reason": "why", "example": "optional code snippet"}
+  ],
+  "test_coverage_assessment": "No tests|Partial|Good|Comprehensive",
+  "missing_tests": ["Test case that should exist"],
+  "documentation_quality": "none|poor|adequate|good|excellent",
+  "dependencies": ["detected imports/dependencies"],
+  "best_practices": {
+    "followed": ["Good practice observed"],
+    "violated": ["Practice that should be followed"]
+  },
+  "overall_score": 7,
+  "grade": "A|B|C|D|F",
+  "summary_for_pr": "One-paragraph PR review summary"
+}"""
+
+
+@app.post("/api/analyze-code")
+async def analyze_code(
+    files: List[UploadFile] = File(...),
+    model: str = Form("claude-opus-4-8"),
+    context: str = Form(""),
+):
+    content_blocks = []
+    for f in files:
+        content = await f.read()
+        text = content.decode("utf-8", errors="replace")
+        lang = f.filename.rsplit(".", 1)[-1] if "." in (f.filename or "") else "txt"
+        content_blocks.append({"type": "text", "text": f"### File: {f.filename}\n```{lang}\n{text}\n```\n"})
+
+    prompt = CODE_ANALYSIS_PROMPT
+    if context:
+        prompt = f"Context: {context}\n\n" + prompt
+    content_blocks.append({"type": "text", "text": prompt})
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=5000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": content_blocks}],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type':'result','data':parsed})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/code-chat")
+async def code_chat(
+    code_context: str = Form(...),
+    messages: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    try:
+        msgs = json.loads(messages)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid messages JSON")
+    first_user = next((m for m in msgs if m["role"] == "user"), None)
+    if first_user and code_context:
+        content = first_user.get("content", "")
+        if isinstance(content, str):
+            first_user["content"] = f"Code context:\n{code_context[:8000]}\n\nQuestion: {content}"
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model, max_tokens=4000, thinking={"type": "adaptive"},
+                system="You are a senior software engineer. Answer questions about the provided code with precision. Include code examples when helpful.",
+                messages=msgs,
+            ) as s:
+                for ev in s:
+                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
+                    elif type(ev).__name__ == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+        headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")

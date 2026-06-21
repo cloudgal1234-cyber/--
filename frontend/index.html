@@ -52,6 +52,18 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         Document IQ
       </button>
+      <button class="mode-btn" data-mode="data">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Data Studio
+      </button>
+      <button class="mode-btn" data-mode="code">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Code IQ
+      </button>
+      <button class="mode-btn" data-mode="live">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+        Live Vision
+      </button>
     </div>
 
     <div class="sb-section" id="chat-sidebar">
@@ -156,6 +168,73 @@
         <div class="cap-badge">🌍 Language Detection</div>
         <div class="cap-badge">📋 Chapter Markers</div>
         <div class="cap-badge">🎭 Sentiment Arc</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="data-sidebar">
+      <div class="sb-label">Analysis Model</div>
+      <select id="data-model-select" class="model-select">
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Best)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-fable-5">Fable 5 ✦✦</option>
+      </select>
+      <div class="sb-label" style="margin-top:12px">Question (optional)</div>
+      <input type="text" id="data-question-input" class="edit-instructions-input" placeholder="e.g. What drives sales?"/>
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">📊 Auto Chart Builder</div>
+        <div class="cap-badge">📈 Statistical Analysis</div>
+        <div class="cap-badge">🔍 Anomaly Detection</div>
+        <div class="cap-badge">🔗 Correlation Finder</div>
+        <div class="cap-badge">💡 AI Insights</div>
+        <div class="cap-badge">⚠️ Data Quality Score</div>
+        <div class="cap-badge">💬 Data Q&amp;A</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="code-sidebar">
+      <div class="sb-label">Analysis Model</div>
+      <select id="code-model-select" class="model-select">
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Best)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-fable-5">Fable 5 ✦✦</option>
+      </select>
+      <div class="sb-label" style="margin-top:12px">Context (optional)</div>
+      <input type="text" id="code-context-input" class="edit-instructions-input" placeholder="e.g. This is a REST API for payments"/>
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">🐛 Bug Detection</div>
+        <div class="cap-badge">🔒 Security Audit</div>
+        <div class="cap-badge">⚡ Performance Issues</div>
+        <div class="cap-badge">♻️ Refactor Suggestions</div>
+        <div class="cap-badge">🧪 Missing Tests</div>
+        <div class="cap-badge">📝 Code Quality Grade</div>
+        <div class="cap-badge">💬 Code Q&amp;A</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="live-sidebar">
+      <div class="sb-label">Analysis Speed</div>
+      <select id="live-model-select" class="model-select">
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5 ⚡ (Fastest)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-opus-4-8">Opus 4.8 (Detailed)</option>
+      </select>
+      <div class="sb-label" style="margin-top:12px">Capture Interval</div>
+      <div class="frame-slider-row">
+        <input type="range" id="live-interval" min="2" max="10" value="4" step="1"/>
+        <span id="live-interval-label">4s</span>
+      </div>
+      <div class="sb-label" style="margin-top:12px">Focus (optional)</div>
+      <input type="text" id="live-focus-input" class="edit-instructions-input" placeholder="e.g. count people, read text, detect emotions…"/>
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">👁 Real-time Analysis</div>
+        <div class="cap-badge">📝 OCR / Text Reading</div>
+        <div class="cap-badge">👥 People Counting</div>
+        <div class="cap-badge">😊 Emotion Detection</div>
+        <div class="cap-badge">🔍 Object Tracking</div>
+        <div class="cap-badge">📊 Scene Change Alerts</div>
       </div>
     </div>
 
@@ -388,6 +467,216 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ════════ DATA ANALYSIS STUDIO ════════ -->
+    <div id="data-view" class="hidden">
+      <div id="data-upload" class="img-upload">
+        <div class="img-drop" id="data-drop">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="url(#dag)" stroke-width="1.3">
+            <defs><linearGradient id="dag" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#10b981"/></linearGradient></defs>
+            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+          <h2>Drop your data file here</h2>
+          <p>CSV · JSON · TSV · up to 10 MB</p>
+          <button class="upload-btn" id="data-pick-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose File
+          </button>
+          <input type="file" id="data-file-input" accept=".csv,.json,.tsv,.txt" hidden/>
+        </div>
+      </div>
+      <div id="data-processing" class="img-processing hidden">
+        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Analyzing Data…</div><div class="proc-sub">Claude is crunching numbers</div></div></div>
+      </div>
+      <div id="data-studio" class="data-studio hidden">
+        <div class="img-topbar">
+          <div id="data-meta" class="img-meta"></div>
+          <div class="studio-actions">
+            <button id="data-reanalyze-btn" class="action-btn action-primary">Re-Analyze</button>
+            <button id="data-reset-btn" class="action-btn action-ghost">New File</button>
+          </div>
+        </div>
+        <div class="data-workspace">
+          <!-- Summary + charts -->
+          <div class="data-left-col">
+            <div class="img-card data-hero-card">
+              <div id="data-title-display" class="doc-title-display"></div>
+              <div id="data-summary-text" class="img-card-body" style="margin-top:8px"></div>
+              <div id="data-quality-bar" style="margin-top:10px"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">💡 Key Insights</div>
+              <div id="data-insights" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">📊 Auto Charts</div>
+              <div id="data-charts" class="data-charts-wrap"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">🔗 Correlations</div>
+              <div id="data-correlations" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">⚠️ Anomalies &amp; Trends</div>
+              <div id="data-anomalies" class="img-card-body"></div>
+            </div>
+          </div>
+          <!-- Columns + stats -->
+          <div class="data-right-col">
+            <div class="img-card">
+              <div class="img-card-title">📋 Column Overview</div>
+              <div id="data-columns" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">📈 Statistics</div>
+              <div id="data-stats" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">🚀 Recommendations</div>
+              <div id="data-recs" class="img-card-body"></div>
+            </div>
+            <!-- Data preview table -->
+            <div class="img-card">
+              <div class="img-card-title">🗄 Data Preview</div>
+              <div id="data-preview-table" class="data-preview-wrap"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Q&A -->
+        <div class="img-chat-wrap">
+          <div class="img-chat-title">💬 Ask about this Data</div>
+          <div id="data-chat-messages" class="img-chat-messages"></div>
+          <div class="img-chat-input-row">
+            <input id="data-chat-input" class="vqa-input" type="text" placeholder="Ask anything: average sales by region, trend over time, top 10 rows by value…" onkeydown="if(event.key==='Enter')sendDataChat()"/>
+            <button class="vqa-send" onclick="sendDataChat()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════ CODE INTELLIGENCE STUDIO ════════ -->
+    <div id="code-view" class="hidden">
+      <div id="code-upload" class="img-upload">
+        <div class="img-drop" id="code-drop">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="url(#cog)" stroke-width="1.3">
+            <defs><linearGradient id="cog" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+            <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+          </svg>
+          <h2>Drop your code files here</h2>
+          <p>JS · TS · PY · GO · JAVA · C++ · RUST · up to 10 files</p>
+          <button class="upload-btn" id="code-pick-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Choose Files
+          </button>
+          <input type="file" id="code-file-input" accept=".js,.ts,.tsx,.jsx,.py,.go,.java,.cpp,.c,.h,.rs,.rb,.php,.cs,.swift,.kt,.vue,.html,.css,.sql,.sh,.yaml,.yml,.toml,.json,.xml" multiple hidden/>
+        </div>
+      </div>
+      <div id="code-processing" class="img-processing hidden">
+        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Analyzing Code…</div><div class="proc-sub">Security · Bugs · Performance · Quality</div></div></div>
+      </div>
+      <div id="code-studio" class="code-studio hidden">
+        <div class="img-topbar">
+          <div id="code-meta" class="img-meta"></div>
+          <div class="studio-actions">
+            <button id="code-reanalyze-btn" class="action-btn action-primary">Re-Analyze</button>
+            <button id="code-reset-btn" class="action-btn action-ghost">New Files</button>
+          </div>
+        </div>
+        <div class="code-workspace">
+          <!-- Grade + summary -->
+          <div class="code-left-col">
+            <div class="img-card code-grade-card">
+              <div id="code-grade-display" class="code-grade-display"></div>
+              <div id="code-lang-chips" class="doc-meta-chips" style="margin:8px 0"></div>
+              <div id="code-summary-text" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">🐛 Bugs <span id="bug-count" class="code-badge-red"></span></div>
+              <div id="code-bugs" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">🔒 Security Issues <span id="sec-count" class="code-badge-red"></span></div>
+              <div id="code-security" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">⚡ Performance</div>
+              <div id="code-performance" class="img-card-body"></div>
+            </div>
+          </div>
+          <div class="code-right-col">
+            <div class="img-card">
+              <div class="img-card-title">♻️ Refactoring <span id="ref-count" class="code-badge-amber"></span></div>
+              <div id="code-refactor" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">🧪 Tests &amp; Coverage</div>
+              <div id="code-tests" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">✅ Best Practices</div>
+              <div id="code-practices" class="img-card-body"></div>
+            </div>
+            <div class="img-card">
+              <div class="img-card-title">📝 PR Summary</div>
+              <div id="code-pr-summary" class="img-card-body"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Code viewer + Q&A -->
+        <div class="code-file-viewer" id="code-file-viewer"></div>
+        <div class="img-chat-wrap">
+          <div class="img-chat-title">💬 Ask about this Code</div>
+          <div id="code-chat-messages" class="img-chat-messages"></div>
+          <div class="img-chat-input-row">
+            <input id="code-chat-input" class="vqa-input" type="text" placeholder="Ask: explain line 42, how to add auth, refactor the loop, write tests for this…" onkeydown="if(event.key==='Enter')sendCodeChat()"/>
+            <button class="vqa-send" onclick="sendCodeChat()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════ LIVE VISION ════════ -->
+    <div id="live-view" class="hidden">
+      <div class="live-layout">
+        <div class="live-cam-col">
+          <div class="live-cam-wrap" id="live-cam-wrap">
+            <video id="live-video" class="live-video" autoplay playsinline muted></video>
+            <canvas id="live-capture-canvas" class="hidden"></canvas>
+            <div class="live-status-bar" id="live-status-bar">
+              <span class="live-dot" id="live-dot"></span>
+              <span id="live-status-text">Camera off</span>
+            </div>
+          </div>
+          <div class="live-controls">
+            <button class="upload-btn" id="live-start-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+              Start Live Analysis
+            </button>
+            <button class="action-btn action-ghost hidden" id="live-stop-btn">Stop</button>
+            <button class="action-btn action-ghost" id="live-snap-btn" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Snap &amp; Analyze
+            </button>
+          </div>
+          <!-- Frame history -->
+          <div class="live-frame-history" id="live-frame-history"></div>
+        </div>
+        <div class="live-analysis-col">
+          <div class="live-feed-header">
+            <div class="live-badge" id="live-analyzing-badge">
+              <div class="tool-spinner" style="width:10px;height:10px;border-color:rgba(16,185,129,.3);border-top-color:#10b981"></div>
+              Analyzing…
+            </div>
+            <span style="font-size:11px;color:var(--text3)" id="live-frame-count">0 frames analyzed</span>
+          </div>
+          <div id="live-analysis-feed" class="live-analysis-feed"></div>
+        </div>
       </div>
     </div>
 
