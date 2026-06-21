@@ -7,7 +7,7 @@ import struct
 import base64
 import tempfile
 import subprocess
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 
 import anthropic
 import cv2
@@ -1523,6 +1523,396 @@ async def image_chat(
                         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUDIO INTELLIGENCE STUDIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+AUDIO_ANALYSIS_PROMPT = """You are a world-class audio intelligence system combining speech analysis, music theory, and audio engineering expertise.
+
+Listen carefully to this audio and return ONLY this JSON (no markdown, no prose):
+
+{
+  "type": "speech|music|podcast|interview|ambient|mixed",
+  "duration_estimate": "e.g. 2 minutes 30 seconds",
+  "language": "detected language or 'unknown'",
+  "transcript": "Full verbatim transcript. For music, transcribe lyrics. For ambient, describe sounds.",
+  "speakers": [
+    {"id": "Speaker 1", "description": "Voice characteristics", "speaking_time_pct": 60}
+  ],
+  "summary": "2-3 sentence executive summary of content",
+  "key_topics": ["topic1", "topic2", "topic3"],
+  "sentiment": "positive|negative|neutral|mixed",
+  "emotional_arc": "e.g. starts anxious, builds to hopeful, ends resolved",
+  "notable_quotes": [
+    {"quote": "exact words", "speaker": "Speaker 1", "significance": "why important"}
+  ],
+  "chapters": [
+    {"title": "Chapter name", "start": "00:00", "end": "01:30", "summary": "what happens"}
+  ],
+  "music_analysis": {
+    "genre": "if music: genre detected",
+    "bpm_estimate": 120,
+    "key": "C major",
+    "mood": "energetic|melancholic|upbeat|dark|peaceful",
+    "instruments": ["piano", "drums", "bass"],
+    "production_style": "lo-fi|polished|live|electronic"
+  },
+  "audio_quality": {
+    "clarity": "excellent|good|fair|poor",
+    "background_noise": "none|low|moderate|high",
+    "recording_environment": "studio|indoor|outdoor|phone|video-call",
+    "issues": []
+  },
+  "action_items": ["Any tasks, commitments, or follow-ups mentioned"],
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "content_warnings": [],
+  "translation_note": "If non-English: note the language and any translation nuances"
+}"""
+
+
+AUDIO_ALLOWED = {
+    "audio/mpeg", "audio/mp4", "audio/mp3", "audio/wav", "audio/wave",
+    "audio/x-wav", "audio/ogg", "audio/flac", "audio/aac", "audio/webm",
+    "audio/m4a", "audio/x-m4a",
+}
+
+
+@app.post("/api/analyze-audio")
+async def analyze_audio(file: UploadFile = File(...), model: str = Form("claude-opus-4-8")):
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio too large (max 50MB)")
+    media_type = file.content_type or "audio/mpeg"
+    if not (media_type.startswith("audio/") or media_type == "video/webm"):
+        raise HTTPException(status_code=415, detail="Not a supported audio format")
+
+    try:
+        uploaded = client.beta.files.upload(
+            file=(file.filename or "audio.mp3", content, media_type)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    file_id = uploaded.id
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=4000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": [
+                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                    {"type": "text", "text": AUDIO_ANALYSIS_PROMPT},
+                ]}],
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            try: client.beta.files.delete(file_id)
+            except Exception: pass
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/audio-chat")
+async def audio_chat(
+    file_id: str = Form(...),
+    messages: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    try:
+        msgs = json.loads(messages)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid messages JSON")
+
+    first_user = next((m for m in msgs if m["role"] == "user"), None)
+    if first_user and file_id:
+        content = first_user.get("content", "")
+        if isinstance(content, str):
+            first_user["content"] = [
+                {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                {"type": "text", "text": content},
+            ]
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=2500,
+                thinking={"type": "adaptive"},
+                system="You are an expert audio analyst, linguist, and music theorist. Answer questions about the provided audio with professional depth.",
+                messages=msgs,
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOCUMENT INTELLIGENCE
+# ══════════════════════════════════════════════════════════════════════════════
+
+DOCUMENT_ANALYSIS_PROMPT = """You are a world-class document intelligence system. Extract every meaningful piece of information from this document.
+
+Return ONLY this JSON (no markdown, no prose):
+
+{
+  "title": "Document title or inferred title",
+  "type": "report|article|contract|invoice|resume|research_paper|manual|email|letter|other",
+  "author": "Author name(s) or 'Unknown'",
+  "date": "Publication/creation date or 'Unknown'",
+  "language": "Primary language",
+  "page_count_estimate": 1,
+  "summary": {
+    "one_line": "Single sentence summary",
+    "executive": "3-5 sentence executive summary",
+    "bullet_points": ["Key point 1", "Key point 2", "Key point 3", "Key point 4", "Key point 5"]
+  },
+  "structure": {
+    "sections": [{"title": "Section name", "page": "1", "description": "What this section covers"}],
+    "has_table_of_contents": false,
+    "has_references": false,
+    "has_figures": false,
+    "has_tables": false
+  },
+  "key_entities": {
+    "people": ["Name and role"],
+    "organizations": ["Org name and context"],
+    "locations": ["Place and context"],
+    "dates": ["Date and event"],
+    "monetary_values": ["Amount and context"],
+    "products": [],
+    "legal_references": []
+  },
+  "extracted_data": {
+    "tables": [{"title": "Table name", "headers": [], "rows": [[]]}],
+    "lists": [{"title": "List name", "items": []}],
+    "formulas": [],
+    "definitions": [{"term": "term", "definition": "definition"}]
+  },
+  "citations": [{"text": "citation text", "source": "source name", "year": "year"}],
+  "action_items": ["Deadline or task identified in document"],
+  "risks_or_warnings": ["Any risks, warnings, or red flags"],
+  "sentiment": "positive|negative|neutral|formal|technical",
+  "readability": "elementary|intermediate|advanced|expert",
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "keyword6", "keyword7", "keyword8"],
+  "topics": ["Main topic 1", "Main topic 2", "Main topic 3"],
+  "questions_answered": ["What question does this document answer?"],
+  "gaps_or_missing_info": ["What important info seems missing?"],
+  "related_topics": ["What else should be researched?"]
+}"""
+
+
+@app.post("/api/analyze-document")
+async def analyze_document(
+    file: UploadFile = File(...),
+    model: str = Form("claude-opus-4-8"),
+    focus: str = Form(""),
+):
+    content = await file.read()
+    if len(content) > 32 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large (max 32MB)")
+    media_type = file.content_type or "application/pdf"
+
+    try:
+        uploaded = client.beta.files.upload(
+            file=(file.filename or "document.pdf", content, media_type)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    file_id = uploaded.id
+    prompt = DOCUMENT_ANALYSIS_PROMPT
+    if focus:
+        prompt += f"\n\nAdditional focus: {focus}"
+
+    async def _stream():
+        full = ""
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=6000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": [
+                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                    {"type": "text", "text": prompt},
+                ]}],
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            full += ev.delta.text
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        try:
+                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+                            parsed = json.loads(clean)
+                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
+                        except Exception as e2:
+                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            try: client.beta.files.delete(file_id)
+            except Exception: pass
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/document-chat")
+async def document_chat(
+    file_id: str = Form(...),
+    messages: str = Form(...),
+    model: str = Form("claude-opus-4-8"),
+):
+    try:
+        msgs = json.loads(messages)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid messages JSON")
+
+    first_user = next((m for m in msgs if m["role"] == "user"), None)
+    if first_user and file_id:
+        content = first_user.get("content", "")
+        if isinstance(content, str):
+            first_user["content"] = [
+                {"type": "document", "source": {"type": "file", "file_id": file_id}},
+                {"type": "text", "text": content},
+            ]
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=4000,
+                thinking={"type": "adaptive"},
+                system="You are an expert document analyst. Answer questions about the provided document with precision, citing specific sections when relevant.",
+                messages=msgs,
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IMAGE COMPARE
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/compare-images")
+async def compare_images(
+    files: List[UploadFile] = File(...),
+    prompt: str = Form("Compare these images in detail"),
+    model: str = Form("claude-opus-4-8"),
+):
+    if len(files) < 2 or len(files) > 4:
+        raise HTTPException(status_code=400, detail="Send 2–4 images")
+
+    file_ids = []
+    for f in files:
+        content = await f.read()
+        mt = f.content_type or "image/jpeg"
+        up = client.beta.files.upload(file=(f.filename or "image.jpg", content, mt))
+        file_ids.append(up.id)
+
+    content_blocks = []
+    for i, fid in enumerate(file_ids):
+        content_blocks.append({"type": "text", "text": f"Image {i+1}:"})
+        content_blocks.append({"type": "image", "source": {"type": "file", "file_id": fid}})
+    content_blocks.append({"type": "text", "text": prompt + """
+
+Provide a structured comparison covering:
+1. **Visual Differences** — composition, lighting, color, subject
+2. **Technical Quality** — sharpness, exposure, noise, dynamic range
+3. **Mood & Style** — emotional impact, aesthetic, genre
+4. **Ranking** — rank images from best to least, with specific reasons
+5. **Best For** — which image works best for: social media, print, editorial, commercial
+6. **Verdict** — which is the strongest image and why
+
+Be specific and direct. Reference each image by its number."""})
+
+    async def _stream():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=3000,
+                thinking={"type": "adaptive"},
+                messages=[{"role": "user", "content": content_blocks}],
+                betas=["files-api-2025-04-14"],
+            ) as s:
+                for ev in s:
+                    t = type(ev).__name__
+                    if t == "RawContentBlockDeltaEvent":
+                        dt = getattr(ev.delta, "type", None)
+                        if dt == "text_delta":
+                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
+                    elif t == "RawMessageStopEvent":
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            for fid in file_ids:
+                try: client.beta.files.delete(fid)
+                except Exception: pass
 
     return StreamingResponse(
         _stream(), media_type="text/event-stream",

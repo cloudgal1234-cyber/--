@@ -24,6 +24,21 @@ const S = {
   // Video Q&A chat
   vqaMsgs: [],          // [{role, content}] Anthropic messages format
   vqaStreaming: false,
+  // Audio Studio
+  audioFile: null,
+  audioBlobUrl: null,
+  audioFileId: null,
+  audioAnalysis: null,
+  audioChatMsgs: [],
+  audioChatStreaming: false,
+  // Document Intelligence
+  docFile: null,
+  docFileId: null,
+  docAnalysis: null,
+  docChatMsgs: [],
+  docChatStreaming: false,
+  // Image Compare
+  compareFiles: [null, null, null, null],
   // Image Studio
   imgFile: null,
   imgBlobUrl: null,
@@ -46,12 +61,14 @@ const el = {
   modelSel: $('model-select'), tSearch: $('t-search'), tCode: $('t-code'), tThink: $('t-think'),
   newChatBtn: $('new-chat-btn'),
   chatSb: $('chat-sidebar'), videoSb: $('video-sidebar'), imgSb: $('img-sidebar'),
+  audioSb: $('audio-sidebar'), docSb: $('doc-sidebar'),
   modeBtns: document.querySelectorAll('.mode-btn'),
   frameCount: $('frame-count'), frameCountLabel: $('frame-count-label'),
   sceneThresh: $('scene-thresh'), sceneThreshLabel: $('scene-thresh-label'),
   videoModelSel: $('video-model-select'),
   // Views
   chatView: $('chat-view'), videoView: $('video-view'), imageView: $('image-view'),
+  audioView: $('audio-view'), documentView: $('document-view'),
   // Video upload
   vUpload: $('v-upload'), vDrop: $('v-drop'),
   vPickBtn: $('v-pick-btn'), vFileInput: $('v-file-input'),
@@ -107,9 +124,13 @@ el.modeBtns.forEach(btn => btn.addEventListener('click', () => {
   el.chatView.classList.toggle('hidden', mode !== 'chat');
   el.videoView.classList.toggle('hidden', mode !== 'video');
   el.imageView.classList.toggle('hidden', mode !== 'image');
+  el.audioView.classList.toggle('hidden', mode !== 'audio');
+  el.documentView.classList.toggle('hidden', mode !== 'document');
   el.chatSb.classList.toggle('hidden', mode !== 'chat');
   el.videoSb.classList.toggle('hidden', mode !== 'video');
   el.imgSb.classList.toggle('hidden', mode !== 'image');
+  el.audioSb.classList.toggle('hidden', mode !== 'audio');
+  el.docSb.classList.toggle('hidden', mode !== 'document');
 }));
 
 // ── Sliders ────────────────────────────────────────────────────────────────
@@ -2073,6 +2094,640 @@ async function processVideoOp(operation) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// AUDIO INTELLIGENCE STUDIO
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initAudioStudio() {
+  const audDrop   = $('aud-drop');
+  const audUpload = $('aud-upload');
+  const audPickBtn = $('aud-pick-btn');
+  const audFileInput = $('aud-file-input');
+  const audProcessing = $('aud-processing');
+  const audStudio  = $('aud-studio');
+  const audProcSub = $('aud-proc-sub');
+  const audReanalBtn = $('aud-reanalyze-btn');
+  const audResetBtn  = $('aud-reset-btn');
+  const audRecTrigger = $('aud-rec-trigger-btn');
+  const sidebarRecBtn = $('audio-record-btn');
+  const audRecPanel  = $('aud-recorder-panel');
+  const audStopBtn   = $('aud-stop-btn');
+  const audRecClose  = $('aud-rec-close-btn');
+  const audPlayer    = $('aud-player');
+
+  let mediaRecorder = null, recChunks = [], recInterval = null, recStart = null;
+
+  // ── File upload ──────────────────────────────────────────────────────────
+  audPickBtn.addEventListener('click', () => audFileInput.click());
+  audFileInput.addEventListener('change', e => { if (e.target.files[0]) loadAudioFile(e.target.files[0]); e.target.value = ''; });
+  audDrop.addEventListener('dragover', e => { e.preventDefault(); audDrop.classList.add('drag-over'); });
+  audDrop.addEventListener('dragleave', () => audDrop.classList.remove('drag-over'));
+  audDrop.addEventListener('drop', e => {
+    e.preventDefault(); audDrop.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('audio/')) loadAudioFile(f);
+    else toast('Please drop an audio file', 'error');
+  });
+
+  // ── Live recorder ─────────────────────────────────────────────────────────
+  function openRecorder() {
+    navigator.mediaDevices.getUserMedia({audio: true, video: false})
+      .then(stream => {
+        recChunks = [];
+        mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm'});
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recChunks.push(e.data); };
+        mediaRecorder.start(200);
+        recStart = Date.now();
+        audRecPanel.classList.remove('hidden');
+        audDrop.style.display = 'none';
+        startRecViz(stream);
+        recInterval = setInterval(() => {
+          const sec = Math.round((Date.now() - recStart) / 1000);
+          const m = String(Math.floor(sec/60)).padStart(2,'0');
+          const s = String(sec % 60).padStart(2,'0');
+          $('aud-rec-time').textContent = `${m}:${s}`;
+        }, 1000);
+      })
+      .catch(e => toast('Microphone access denied: ' + e.message, 'error'));
+  }
+
+  function stopRecorder() {
+    if (!mediaRecorder) return;
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    clearInterval(recInterval);
+    audRecPanel.classList.add('hidden');
+    audDrop.style.display = '';
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recChunks, {type:'audio/webm'});
+      const f = new File([blob], `recording-${Date.now()}.webm`, {type:'audio/webm'});
+      loadAudioFile(f);
+    };
+  }
+
+  function cancelRecorder() {
+    if (mediaRecorder) { mediaRecorder.stream.getTracks().forEach(t => t.stop()); mediaRecorder = null; }
+    clearInterval(recInterval);
+    audRecPanel.classList.add('hidden');
+    audDrop.style.display = '';
+    recChunks = [];
+  }
+
+  function startRecViz(stream) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const canvas = $('aud-rec-canvas');
+    const cx = canvas.getContext('2d');
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    function draw() {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+      requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(data);
+      const w = canvas.width, h = canvas.height;
+      cx.fillStyle = 'rgba(10,10,20,.6)';
+      cx.fillRect(0,0,w,h);
+      cx.strokeStyle = '#10b981';
+      cx.lineWidth = 2;
+      cx.beginPath();
+      const sl = w / data.length;
+      data.forEach((v,i) => {
+        const x = i * sl, y = (v/128) * h/2;
+        i === 0 ? cx.moveTo(x,y) : cx.lineTo(x,y);
+      });
+      cx.stroke();
+    }
+    draw();
+  }
+
+  audRecTrigger.addEventListener('click', openRecorder);
+  sidebarRecBtn.addEventListener('click', () => { if (S.mode !== 'audio') { el.modeBtns.forEach(b => b.dataset.mode === 'audio' && b.click()); } setTimeout(openRecorder, 50); });
+  audStopBtn.addEventListener('click', stopRecorder);
+  audRecClose.addEventListener('click', cancelRecorder);
+  audReanalBtn.addEventListener('click', () => { if (S.audioFile) analyzeAudio(S.audioFile); });
+  audResetBtn.addEventListener('click', resetAudioStudio);
+
+  function resetAudioStudio() {
+    S.audioFile = null; S.audioBlobUrl = null; S.audioFileId = null; S.audioAnalysis = null;
+    S.audioChatMsgs = []; S.audioChatStreaming = false;
+    audUpload.classList.remove('hidden');
+    audProcessing.classList.add('hidden');
+    audStudio.classList.add('hidden');
+    $('aud-chat-messages').innerHTML = '';
+    if (audPlayer) { audPlayer.src = ''; }
+  }
+
+  window.loadAudioFile = function(file) {
+    S.audioFile = file;
+    if (S.audioBlobUrl) URL.revokeObjectURL(S.audioBlobUrl);
+    S.audioBlobUrl = URL.createObjectURL(file);
+    analyzeAudio(file);
+  };
+
+  // ── Analyze ────────────────────────────────────────────────────────────────
+  async function analyzeAudio(file) {
+    audUpload.classList.add('hidden');
+    audStudio.classList.add('hidden');
+    audProcessing.classList.remove('hidden');
+    if (audProcSub) audProcSub.textContent = 'Uploading to Claude…';
+
+    const model = $('audio-model-select')?.value || 'claude-opus-4-8';
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('model', model);
+
+    try {
+      const resp = await fetch(`${API}/api/analyze-audio`, {method:'POST', body:fd});
+      if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail || 'Analysis failed'); }
+      if (audProcSub) audProcSub.textContent = 'AI listening & analyzing…';
+
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'result') { S.audioAnalysis = evt.data; S.audioFileId = evt.file_id; }
+          } catch { /* partial */ }
+        }
+      }
+
+      S.audioChatMsgs = [];
+      $('aud-chat-messages').innerHTML = '';
+      audProcessing.classList.add('hidden');
+      audStudio.classList.remove('hidden');
+
+      // Wire up player
+      if (audPlayer) { audPlayer.src = S.audioBlobUrl; }
+      $('aud-meta').innerHTML = `<span class="v-meta-item">🎵 ${esc(file.name)}</span><span class="v-meta-item">${(file.size/1024/1024).toFixed(1)} MB</span><span class="v-meta-item">${file.type}</span>`;
+
+      // Draw waveform
+      drawAudioWaveform(S.audioBlobUrl);
+
+      if (S.audioAnalysis) renderAudioAnalysis(S.audioAnalysis);
+
+    } catch(e) {
+      audProcessing.classList.add('hidden');
+      audUpload.classList.remove('hidden');
+      toast(e.message || 'Audio analysis failed', 'error');
+    }
+  }
+
+  // ── Waveform vis ──────────────────────────────────────────────────────────
+  async function drawAudioWaveform(src) {
+    const canvas = $('aud-waveform');
+    if (!canvas) return;
+    const cx = canvas.getContext('2d');
+    try {
+      const arrayBuf = await (await fetch(src)).arrayBuffer();
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await audioCtx.decodeAudioData(arrayBuf);
+      const data = decoded.getChannelData(0);
+      const w = canvas.offsetWidth || 800; canvas.width = w;
+      const step = Math.ceil(data.length / w);
+      cx.fillStyle = '#0a0a14';
+      cx.fillRect(0,0,w,80);
+      cx.fillStyle = '#10b981';
+      for (let i = 0; i < w; i++) {
+        let max = 0;
+        for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(data[i*step+j] || 0));
+        const h = max * 70;
+        cx.fillRect(i, 40-h/2, 1, h);
+      }
+    } catch { /* no Web Audio API or decode failed */ }
+  }
+
+  // ── Render analysis ────────────────────────────────────────────────────────
+  function renderAudioAnalysis(d) {
+    // Summary
+    const sumEl = $('aud-summary');
+    if (sumEl) sumEl.innerHTML = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        ${chip(d.type,'purple')}${chip(d.language,'cyan')}${chip(d.sentiment,'amber')}
+        ${chip(d.audio_quality?.clarity,'green')}
+      </div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.6">${esc(d.summary||'')}</div>
+      ${d.emotional_arc ? `<div style="font-size:11.5px;color:var(--text3);margin-top:6px;font-style:italic">Emotional arc: ${esc(d.emotional_arc)}</div>` : ''}
+    `;
+
+    // Transcript
+    const trEl = $('aud-transcript');
+    if (trEl) { trEl.textContent = d.transcript || '(No transcript available)'; trEl.style.whiteSpace = 'pre-wrap'; }
+
+    // Quotes
+    const quotes = d.notable_quotes || [];
+    const qEl = $('aud-quotes');
+    if (qEl) qEl.innerHTML = quotes.length
+      ? quotes.map(q => `<div class="aud-quote-item"><span class="aud-quote-mark">"</span><span class="aud-quote-text">${esc(q.quote||q)}</span>${q.speaker?`<div class="aud-quote-who">— ${esc(q.speaker)}${q.significance?' · '+esc(q.significance):''}</div>`:''}</div>`).join('')
+      : '<span style="color:var(--text3)">—</span>';
+
+    // Actions
+    const acts = d.action_items || [];
+    const aEl = $('aud-actions');
+    if (aEl) aEl.innerHTML = acts.length
+      ? acts.map(a => `<div class="img-si-item">☑ ${esc(a)}</div>`).join('')
+      : '<span style="color:var(--text3)">No action items found</span>';
+
+    // Chapters
+    const chapters = d.chapters || [];
+    const chEl = $('aud-chapters');
+    if (chEl) chEl.innerHTML = chapters.length
+      ? chapters.map(c => `<div class="chapter-row" style="cursor:default"><span class="chapter-tc">${c.start||'--'}</span><div><div class="chapter-title">${esc(c.title||'')}</div>${c.summary?`<div class="aud-chap-sub">${esc(c.summary)}</div>`:''}</div></div>`).join('')
+      : '<span style="color:var(--text3)">No chapters detected</span>';
+
+    // Speakers
+    const spk = d.speakers || [];
+    const spEl = $('aud-speakers');
+    if (spEl) spEl.innerHTML = spk.length
+      ? spk.map(s => `<div class="aud-speaker-row"><div class="aud-speaker-name">${esc(s.id||'Speaker')}</div><div class="aud-speaker-pct">${s.speaking_time_pct||''}${s.speaking_time_pct?'%':''}</div><div class="aud-speaker-desc">${esc(s.description||'')}</div></div>`).join('')
+      : '<span style="color:var(--text3)">Single speaker / no diarization</span>';
+
+    // Music
+    const mus = d.music_analysis || {};
+    const mEl = $('aud-music');
+    if (mEl) mEl.innerHTML = Object.keys(mus).length
+      ? [mus.genre,mus.bpm_estimate?`BPM ~${mus.bpm_estimate}`:'',mus.key,mus.mood,mus.production_style].filter(Boolean).map(v=>`<div class="img-si-item">• ${esc(String(v))}</div>`).join('')
+        + (mus.instruments?.length ? `<div class="img-si-item">🎸 ${mus.instruments.join(', ')}</div>` : '')
+      : '<span style="color:var(--text3)">Not a music file</span>';
+
+    // Quality
+    const qual = d.audio_quality || {};
+    const qqEl = $('aud-quality');
+    if (qqEl) qqEl.innerHTML = [
+      qual.clarity ? `Clarity: ${qual.clarity}` : '',
+      qual.background_noise ? `Noise: ${qual.background_noise}` : '',
+      qual.recording_environment ? `Environment: ${qual.recording_environment}` : '',
+      ...(qual.issues || []),
+    ].filter(Boolean).map(v=>`<div class="img-si-item">• ${esc(v)}</div>`).join('') || '—';
+
+    // Topics + keywords
+    const kws = [...(d.key_topics||[]), ...(d.keywords||[])];
+    const kEl = $('aud-topics');
+    if (kEl) kEl.innerHTML = kws.map(k=>`<span class="img-tag img-tag-sm">${esc(k)}</span>`).join('') || '—';
+  }
+
+  function chip(val, color) {
+    if (!val) return '';
+    const colors = {purple:'rgba(124,58,237,.15)',cyan:'rgba(6,182,212,.15)',amber:'rgba(245,158,11,.15)',green:'rgba(16,185,129,.15)'};
+    const borders = {purple:'rgba(124,58,237,.3)',cyan:'rgba(6,182,212,.3)',amber:'rgba(245,158,11,.3)',green:'rgba(16,185,129,.3)'};
+    const text = {purple:'#a78bfa',cyan:'#22d3ee',amber:'#fbbf24',green:'#34d399'};
+    return `<span style="font-size:11.5px;padding:2px 9px;border-radius:99px;background:${colors[color]};border:1px solid ${borders[color]};color:${text[color]}">${esc(val)}</span>`;
+  }
+
+  // ── Copy / download transcript ────────────────────────────────────────────
+  window.copyAudioTranscript = function() {
+    const t = $('aud-transcript')?.textContent || '';
+    navigator.clipboard.writeText(t).then(() => toast('Transcript copied!','success')).catch(()=>toast('Copy failed','error'));
+  };
+  window.downloadAudioSRT = function() {
+    const transcript = S.audioAnalysis?.transcript || '';
+    if (!transcript) { toast('No transcript to export', 'error'); return; }
+    const lines = transcript.split(/\n+/).filter(Boolean);
+    let srt = '';
+    lines.forEach((line, i) => {
+      const start = `00:00:${String(i*5).padStart(2,'0')},000`;
+      const end   = `00:00:${String(i*5+4).padStart(2,'0')},999`;
+      srt += `${i+1}\n${start} --> ${end}\n${line}\n\n`;
+    });
+    const blob = new Blob([srt], {type:'text/srt'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = (S.audioFile?.name || 'transcript').replace(/\.[^.]+$/, '') + '.srt';
+    a.click();
+  };
+
+  // ── Audio Q&A chat ─────────────────────────────────────────────────────────
+  window.sendAudioChat = async function() {
+    const input = $('aud-chat-input');
+    const text = input?.value.trim();
+    if (!text || S.audioChatStreaming) return;
+    if (!S.audioFileId) { toast('No audio analyzed yet','error'); return; }
+    input.value = '';
+    S.audioChatMsgs.push({role:'user', content: text});
+    const chatEl = $('aud-chat-messages');
+    chatEl.innerHTML += `<div class="img-chat-msg img-chat-user"><div class="img-chat-bubble">${esc(text)}</div></div>`;
+    const aiBubble = document.createElement('div');
+    aiBubble.className = 'img-chat-msg img-chat-ai';
+    aiBubble.innerHTML = '<div class="img-chat-bubble"><div class="tool-spinner" style="width:14px;height:14px;display:inline-block"></div></div>';
+    chatEl.appendChild(aiBubble); chatEl.scrollTop = chatEl.scrollHeight;
+    S.audioChatStreaming = true;
+    const model = $('audio-model-select')?.value || 'claude-opus-4-8';
+    const fd = new FormData();
+    fd.append('file_id', S.audioFileId);
+    fd.append('messages', JSON.stringify(S.audioChatMsgs));
+    fd.append('model', model);
+    try {
+      const resp = await fetch(`${API}/api/audio-chat`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader(); const dec = new TextDecoder();
+      let buf = '', fullText = '';
+      const bubble = aiBubble.querySelector('.img-chat-bubble'); bubble.innerHTML = '';
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim(); if (!raw || raw==='[DONE]') continue;
+          try { const evt = JSON.parse(raw); if (evt.type==='text'&&evt.text) { fullText+=evt.text; bubble.innerHTML=md(fullText); chatEl.scrollTop=chatEl.scrollHeight; } } catch { /* */ }
+        }
+      }
+      S.audioChatMsgs.push({role:'assistant', content: fullText});
+    } catch(e) { aiBubble.querySelector('.img-chat-bubble').textContent='⚠ '+e.message; }
+    finally { S.audioChatStreaming = false; chatEl.scrollTop = chatEl.scrollHeight; }
+  };
+})();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// DOCUMENT INTELLIGENCE
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initDocStudio() {
+  const docDrop    = $('doc-drop');
+  const docUpload  = $('doc-upload');
+  const docPickBtn = $('doc-pick-btn');
+  const docFileInput = $('doc-file-input');
+  const docProcessing = $('doc-processing');
+  const docStudio  = $('doc-studio');
+  const docProcSub = $('doc-proc-sub');
+  const docReanalBtn = $('doc-reanalyze-btn');
+  const docResetBtn  = $('doc-reset-btn');
+
+  docPickBtn.addEventListener('click', () => docFileInput.click());
+  docFileInput.addEventListener('change', e => { if (e.target.files[0]) loadDocFile(e.target.files[0]); e.target.value = ''; });
+  docDrop.addEventListener('dragover', e => { e.preventDefault(); docDrop.classList.add('drag-over'); });
+  docDrop.addEventListener('dragleave', () => docDrop.classList.remove('drag-over'));
+  docDrop.addEventListener('drop', e => {
+    e.preventDefault(); docDrop.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0]; if (f) loadDocFile(f); else toast('Drop a document file', 'error');
+  });
+  docReanalBtn.addEventListener('click', () => { if (S.docFile) analyzeDoc(S.docFile); });
+  docResetBtn.addEventListener('click', resetDocStudio);
+
+  // Doc tabs
+  document.querySelectorAll('.doc-tab').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.doc-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const dtab = btn.dataset.dtab;
+    document.querySelectorAll('.doc-tab-panel').forEach(p => p.classList.add('hidden'));
+    $(`dtab-${dtab}`)?.classList.remove('hidden');
+  }));
+
+  function resetDocStudio() {
+    S.docFile = null; S.docFileId = null; S.docAnalysis = null;
+    S.docChatMsgs = []; S.docChatStreaming = false;
+    docUpload.classList.remove('hidden');
+    docProcessing.classList.add('hidden');
+    docStudio.classList.add('hidden');
+    $('doc-chat-messages').innerHTML = '';
+  }
+
+  window.loadDocFile = function(file) {
+    S.docFile = file;
+    analyzeDoc(file);
+  };
+
+  async function analyzeDoc(file) {
+    docUpload.classList.add('hidden');
+    docStudio.classList.add('hidden');
+    docProcessing.classList.remove('hidden');
+    if (docProcSub) docProcSub.textContent = 'Uploading document…';
+
+    const model = $('doc-model-select')?.value || 'claude-opus-4-8';
+    const focus = $('doc-focus-input')?.value || '';
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('model', model);
+    if (focus) fd.append('focus', focus);
+
+    try {
+      const resp = await fetch(`${API}/api/analyze-document`, {method:'POST', body:fd});
+      if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail || 'Analysis failed'); }
+      if (docProcSub) docProcSub.textContent = 'AI reading & extracting…';
+
+      const reader = resp.body.getReader(); const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim(); if (!raw || raw==='[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type==='result') { S.docAnalysis=evt.data; S.docFileId=evt.file_id; }
+          } catch { /* */ }
+        }
+      }
+
+      S.docChatMsgs = []; $('doc-chat-messages').innerHTML = '';
+      docProcessing.classList.add('hidden');
+      docStudio.classList.remove('hidden');
+      $('doc-meta').innerHTML = `<span class="v-meta-item">📄 ${esc(file.name)}</span><span class="v-meta-item">${(file.size/1024).toFixed(0)} KB</span><span class="v-meta-item">${file.type||'document'}</span>`;
+      if (S.docAnalysis) renderDocAnalysis(S.docAnalysis);
+    } catch(e) {
+      docProcessing.classList.add('hidden');
+      docUpload.classList.remove('hidden');
+      toast(e.message || 'Document analysis failed', 'error');
+    }
+  }
+
+  function renderDocAnalysis(d) {
+    // Hero card
+    const titleEl = $('doc-title-display');
+    if (titleEl) titleEl.textContent = d.title || 'Untitled Document';
+
+    const chipsEl = $('doc-meta-chips');
+    if (chipsEl) chipsEl.innerHTML = [
+      d.type, d.language, d.author !== 'Unknown' ? d.author : null,
+      d.date !== 'Unknown' ? d.date : null, d.readability,
+      d.page_count_estimate ? `${d.page_count_estimate} pages` : null,
+    ].filter(Boolean).map(v => `<span class="img-tag img-tag-sm">${esc(String(v))}</span>`).join('');
+
+    const oneLiner = $('doc-one-liner');
+    if (oneLiner) oneLiner.textContent = d.summary?.one_line || '';
+
+    // Exec summary
+    setText2('doc-exec', d.summary?.executive || '');
+
+    // Bullets
+    const bEl = $('doc-bullets');
+    if (bEl) bEl.innerHTML = (d.summary?.bullet_points || []).map(b => `<div class="img-si-item">• ${esc(b)}</div>`).join('') || '—';
+
+    // Risks
+    const rEl = $('doc-risks');
+    if (rEl) rEl.innerHTML = (d.risks_or_warnings||[]).map(r=>`<div class="img-si-item" style="color:var(--amber)">⚠ ${esc(r)}</div>`).join('') || '<span style="color:var(--text3)">No risks flagged</span>';
+
+    // Actions
+    const aEl = $('doc-actions');
+    if (aEl) aEl.innerHTML = (d.action_items||[]).map(a=>`<div class="img-si-item">☑ ${esc(a)}</div>`).join('') || '<span style="color:var(--text3)">None found</span>';
+
+    // Entities tab
+    const entities = d.key_entities || {};
+    const eEl = $('doc-entities');
+    if (eEl) {
+      const sections = [
+        ['👤 People', entities.people], ['🏢 Organizations', entities.organizations],
+        ['📍 Locations', entities.locations], ['📅 Dates', entities.dates],
+        ['💰 Money', entities.monetary_values], ['⚖️ Legal', entities.legal_references],
+      ];
+      eEl.innerHTML = sections.filter(([,v])=>v?.length).map(([label, items])=>
+        `<div class="doc-entity-group"><div class="img-si-label">${label}</div>${items.map(i=>`<div class="img-si-item">• ${esc(i)}</div>`).join('')}</div>`
+      ).join('') || '<span style="color:var(--text3)">No entities extracted</span>';
+    }
+
+    // Structure tab
+    const struct = d.structure || {};
+    const stEl = $('doc-structure');
+    if (stEl) {
+      const flags = [
+        struct.has_table_of_contents && '📑 Table of Contents',
+        struct.has_references && '🔗 References',
+        struct.has_figures && '🖼 Figures',
+        struct.has_tables && '📊 Tables',
+      ].filter(Boolean);
+      const sections = (struct.sections || []).map(s=>`<div class="chapter-row" style="cursor:default"><span class="chapter-tc">${esc(s.page||'')}</span><div><div class="chapter-title">${esc(s.title||'')}</div>${s.description?`<div class="aud-chap-sub">${esc(s.description)}</div>`:''}</div></div>`).join('');
+      stEl.innerHTML = (flags.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${flags.map(f=>`<span class="img-tag img-tag-sm">${esc(f)}</span>`).join('')}</div>` : '') + (sections || '<span style="color:var(--text3)">No section structure detected</span>');
+    }
+
+    // Data tab
+    const extracted = d.extracted_data || {};
+    const dtEl = $('doc-data');
+    if (dtEl) {
+      let html = '';
+      (extracted.tables||[]).forEach(t => {
+        html += `<div class="doc-table-title">📊 ${esc(t.title||'Table')}</div>`;
+        if (t.headers?.length) {
+          html += `<table class="doc-data-table"><thead><tr>${t.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>`;
+          (t.rows||[]).slice(0,8).forEach(row => { html += `<tr>${(Array.isArray(row)?row:[row]).map(c=>`<td>${esc(String(c||''))}</td>`).join('')}</tr>`; });
+          html += '</tbody></table>';
+        }
+      });
+      (extracted.definitions||[]).slice(0,10).forEach(def => {
+        html += `<div class="doc-definition"><strong>${esc(def.term||'')}</strong>: ${esc(def.definition||'')}</div>`;
+      });
+      dtEl.innerHTML = html || '<span style="color:var(--text3)">No structured data extracted</span>';
+    }
+
+    // Citations tab
+    const citEl = $('doc-citations');
+    if (citEl) citEl.innerHTML = (d.citations||[]).map(c=>`<div class="img-si-item"><span style="color:var(--accent)">[${esc(c.source||'')}${c.year?' '+c.year:''}]</span> ${esc(c.text||'')}</div>`).join('') || '<span style="color:var(--text3)">No citations found</span>';
+
+    // Keywords
+    const kEl = $('doc-keywords');
+    if (kEl) kEl.innerHTML = [...(d.topics||[]), ...(d.keywords||[])].map(k=>`<span class="img-tag img-tag-sm">${esc(k)}</span>`).join('');
+  }
+
+  function setText2(id, val) { const e = $(id); if (e) { e.style.whiteSpace='pre-wrap'; e.textContent=val; } }
+
+  // ── Document Q&A ──────────────────────────────────────────────────────────
+  window.sendDocChat = async function() {
+    const input = $('doc-chat-input');
+    const text = input?.value.trim();
+    if (!text || S.docChatStreaming) return;
+    if (!S.docFileId) { toast('No document analyzed yet','error'); return; }
+    input.value = '';
+    S.docChatMsgs.push({role:'user', content: text});
+    const chatEl = $('doc-chat-messages');
+    chatEl.innerHTML += `<div class="img-chat-msg img-chat-user"><div class="img-chat-bubble">${esc(text)}</div></div>`;
+    const aiBubble = document.createElement('div');
+    aiBubble.className = 'img-chat-msg img-chat-ai';
+    aiBubble.innerHTML = '<div class="img-chat-bubble"><div class="tool-spinner" style="width:14px;height:14px;display:inline-block"></div></div>';
+    chatEl.appendChild(aiBubble); chatEl.scrollTop = chatEl.scrollHeight;
+    S.docChatStreaming = true;
+    const model = $('doc-model-select')?.value || 'claude-opus-4-8';
+    const fd = new FormData();
+    fd.append('file_id', S.docFileId);
+    fd.append('messages', JSON.stringify(S.docChatMsgs));
+    fd.append('model', model);
+    try {
+      const resp = await fetch(`${API}/api/document-chat`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+      const reader = resp.body.getReader(); const dec = new TextDecoder();
+      let buf = '', fullText = '';
+      const bubble = aiBubble.querySelector('.img-chat-bubble'); bubble.innerHTML = '';
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim(); if (!raw||raw==='[DONE]') continue;
+          try { const evt=JSON.parse(raw); if(evt.type==='text'&&evt.text){fullText+=evt.text;bubble.innerHTML=md(fullText);chatEl.scrollTop=chatEl.scrollHeight;} } catch { /* */ }
+        }
+      }
+      S.docChatMsgs.push({role:'assistant', content: fullText});
+    } catch(e) { aiBubble.querySelector('.img-chat-bubble').textContent='⚠ '+e.message; }
+    finally { S.docChatStreaming = false; chatEl.scrollTop = chatEl.scrollHeight; }
+  };
+})();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// IMAGE COMPARE
+// ════════════════════════════════════════════════════════════════════════════
+
+window.addCompareSlot = function(index, input) {
+  const file = input.files[0]; if (!file) return;
+  S.compareFiles[index] = file;
+  const slot = $(`cslot-${index}`);
+  if (slot) {
+    const url = URL.createObjectURL(file);
+    slot.style.backgroundImage = `url(${url})`;
+    slot.style.backgroundSize = 'cover';
+    slot.style.backgroundPosition = 'center';
+    slot.querySelector('span').textContent = file.name.slice(0,12);
+    slot.querySelector('svg')?.remove();
+  }
+  input.value = '';
+};
+
+window.runImageCompare = async function() {
+  const filled = S.compareFiles.filter(Boolean);
+  if (filled.length < 2) { toast('Add at least 2 images to compare', 'error'); return; }
+  const resultEl = $('img-compare-result');
+  if (resultEl) { resultEl.classList.remove('hidden'); resultEl.innerHTML = '<div class="proc-anim">⚡ Claude is comparing images…</div>'; }
+  const model = $('img-model-select')?.value || 'claude-opus-4-8';
+  const prompt = $('img-compare-prompt')?.value || 'Compare these images in detail';
+  const fd = new FormData();
+  filled.forEach(f => fd.append('files', f));
+  fd.append('prompt', prompt);
+  fd.append('model', model);
+  try {
+    const resp = await fetch(`${API}/api/compare-images`, {method:'POST', body:fd});
+    if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+    const reader = resp.body.getReader(); const dec = new TextDecoder();
+    let buf = '', fullText = '';
+    if (resultEl) resultEl.innerHTML = '<div class="md-output"></div>';
+    const mdDiv = resultEl?.querySelector('.md-output');
+    while (true) {
+      const {done, value} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim(); if (!raw||raw==='[DONE]') continue;
+        try { const evt=JSON.parse(raw); if(evt.type==='text'&&evt.text){fullText+=evt.text;if(mdDiv){mdDiv.innerHTML=md(fullText);hljs.highlightAll();}}} catch { /* */ }
+      }
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<div style="color:var(--red)">⚠ ${esc(e.message)}</div>`;
+    toast(e.message,'error');
+  }
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // IMAGE INTELLIGENCE STUDIO
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -2482,7 +3137,7 @@ window.runSilenceDetect = runSilenceDetect;
 window.removeSilences = removeSilences;
 window.exportAspectRatio = exportAspectRatio;
 window.generateVoiceover = generateVoiceover;
-// Image Studio (functions set inside IIFE, already on window)
+// Audio Studio, Document Intelligence, Image Compare, Image Studio — set on window inside their IIFEs
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();
