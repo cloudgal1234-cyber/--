@@ -24,6 +24,13 @@ const S = {
   // Video Q&A chat
   vqaMsgs: [],          // [{role, content}] Anthropic messages format
   vqaStreaming: false,
+  // Image Studio
+  imgFile: null,
+  imgBlobUrl: null,
+  imgFileId: null,      // Files API persistent reference
+  imgAnalysis: null,    // parsed JSON from analyze-image
+  imgChatMsgs: [],      // [{role, content}]
+  imgChatStreaming: false,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -38,13 +45,13 @@ const el = {
   // Sidebar
   modelSel: $('model-select'), tSearch: $('t-search'), tCode: $('t-code'), tThink: $('t-think'),
   newChatBtn: $('new-chat-btn'),
-  chatSb: $('chat-sidebar'), videoSb: $('video-sidebar'),
+  chatSb: $('chat-sidebar'), videoSb: $('video-sidebar'), imgSb: $('img-sidebar'),
   modeBtns: document.querySelectorAll('.mode-btn'),
   frameCount: $('frame-count'), frameCountLabel: $('frame-count-label'),
   sceneThresh: $('scene-thresh'), sceneThreshLabel: $('scene-thresh-label'),
   videoModelSel: $('video-model-select'),
   // Views
-  chatView: $('chat-view'), videoView: $('video-view'),
+  chatView: $('chat-view'), videoView: $('video-view'), imageView: $('image-view'),
   // Video upload
   vUpload: $('v-upload'), vDrop: $('v-drop'),
   vPickBtn: $('v-pick-btn'), vFileInput: $('v-file-input'),
@@ -99,8 +106,10 @@ el.modeBtns.forEach(btn => btn.addEventListener('click', () => {
   el.modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   el.chatView.classList.toggle('hidden', mode !== 'chat');
   el.videoView.classList.toggle('hidden', mode !== 'video');
+  el.imageView.classList.toggle('hidden', mode !== 'image');
   el.chatSb.classList.toggle('hidden', mode !== 'chat');
   el.videoSb.classList.toggle('hidden', mode !== 'video');
+  el.imgSb.classList.toggle('hidden', mode !== 'image');
 }));
 
 // ── Sliders ────────────────────────────────────────────────────────────────
@@ -2063,6 +2072,388 @@ async function processVideoOp(operation) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// IMAGE INTELLIGENCE STUDIO
+// ════════════════════════════════════════════════════════════════════════════
+
+(function initImageStudio() {
+  const imgDrop   = $('img-drop');
+  const imgUpload = $('img-upload');
+  const imgPickBtn = $('img-pick-btn');
+  const imgFileInput = $('img-file-input');
+  const imgProcessing = $('img-processing');
+  const imgStudio  = $('img-studio');
+  const imgProcSub = $('img-proc-sub');
+  const imgReanalBtn = $('img-reanalyze-btn');
+  const imgResetBtn  = $('img-reset-btn');
+  const imgSidebarWebcamBtn = $('img-webcam-btn');
+  const imgCamTriggerBtn = $('img-cam-trigger-btn');
+  const imgWebcamPanel = $('img-webcam-panel');
+  const imgWebcamVideo = $('img-webcam-video');
+  const imgCaptureBtn  = $('img-capture-btn');
+  const imgCamCloseBtn = $('img-cam-close-btn');
+
+  let webcamStream = null;
+
+  // ── File pick / drag & drop ──────────────────────────────────────────────
+  imgPickBtn.addEventListener('click', () => imgFileInput.click());
+  imgFileInput.addEventListener('change', e => { if (e.target.files[0]) loadImageFile(e.target.files[0]); e.target.value = ''; });
+
+  imgDrop.addEventListener('dragover', e => { e.preventDefault(); imgDrop.classList.add('drag-over'); });
+  imgDrop.addEventListener('dragleave', () => imgDrop.classList.remove('drag-over'));
+  imgDrop.addEventListener('drop', e => {
+    e.preventDefault(); imgDrop.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) loadImageFile(f);
+    else toast('Please drop an image file', 'error');
+  });
+
+  // ── Webcam ───────────────────────────────────────────────────────────────
+  function openWebcam() {
+    imgWebcamPanel.classList.remove('hidden');
+    imgDrop.style.display = 'none';
+    navigator.mediaDevices.getUserMedia({video: {width: 1280, height: 720}, audio: false})
+      .then(stream => { webcamStream = stream; imgWebcamVideo.srcObject = stream; })
+      .catch(err => { toast('Camera access denied: ' + err.message, 'error'); closeWebcam(); });
+  }
+  function closeWebcam() {
+    if (webcamStream) { webcamStream.getTracks().forEach(t => t.stop()); webcamStream = null; }
+    imgWebcamPanel.classList.add('hidden');
+    imgDrop.style.display = '';
+  }
+  imgCamTriggerBtn.addEventListener('click', openWebcam);
+  imgSidebarWebcamBtn.addEventListener('click', () => { if (S.mode !== 'image') { el.modeBtns.forEach(b => b.dataset.mode === 'image' && b.click()); } setTimeout(openWebcam, 50); });
+  imgCamCloseBtn.addEventListener('click', closeWebcam);
+  imgCaptureBtn.addEventListener('click', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width  = imgWebcamVideo.videoWidth;
+    canvas.height = imgWebcamVideo.videoHeight;
+    canvas.getContext('2d').drawImage(imgWebcamVideo, 0, 0);
+    closeWebcam();
+    canvas.toBlob(blob => { const f = new File([blob], 'webcam-capture.jpg', {type:'image/jpeg'}); loadImageFile(f); }, 'image/jpeg', 0.92);
+  });
+
+  // ── Re-analyze / Reset ───────────────────────────────────────────────────
+  imgReanalBtn.addEventListener('click', () => { if (S.imgFile) analyzeImage(S.imgFile); });
+  imgResetBtn.addEventListener('click', resetImageStudio);
+
+  function resetImageStudio() {
+    S.imgFile = null; S.imgBlobUrl = null; S.imgFileId = null; S.imgAnalysis = null;
+    S.imgChatMsgs = []; S.imgChatStreaming = false;
+    imgUpload.classList.remove('hidden');
+    imgProcessing.classList.add('hidden');
+    imgStudio.classList.add('hidden');
+    $('img-chat-messages').innerHTML = '';
+  }
+
+  // ── Load file ────────────────────────────────────────────────────────────
+  window.loadImageFile = function(file) {
+    if (!file.type.startsWith('image/')) { toast('Please select an image file', 'error'); return; }
+    S.imgFile = file;
+    if (S.imgBlobUrl) URL.revokeObjectURL(S.imgBlobUrl);
+    S.imgBlobUrl = URL.createObjectURL(file);
+    analyzeImage(file);
+  };
+
+  // ── Analyze ──────────────────────────────────────────────────────────────
+  async function analyzeImage(file) {
+    imgUpload.classList.add('hidden');
+    imgStudio.classList.add('hidden');
+    imgProcessing.classList.remove('hidden');
+    if (imgProcSub) imgProcSub.textContent = 'Uploading to Claude…';
+
+    const model = $('img-model-select')?.value || 'claude-opus-4-8';
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('model', model);
+
+    try {
+      const resp = await fetch(`${API}/api/analyze-image`, {method:'POST', body: fd});
+      if (!resp.ok) { const e = await resp.json().catch(()=>({detail:resp.statusText})); throw new Error(e.detail || 'Analysis failed'); }
+
+      if (imgProcSub) imgProcSub.textContent = 'AI analyzing…';
+
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      let fileIdFromStream = null;
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream: true});
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'file_id') { fileIdFromStream = evt.file_id; S.imgFileId = evt.file_id; }
+            if (evt.type === 'result') {
+              let parsed = evt.data;
+              if (typeof parsed === 'string') {
+                const m = parsed.match(/```json\s*([\s\S]*?)\s*```/);
+                if (m) parsed = JSON.parse(m[1]);
+                else { const start = parsed.indexOf('{'); if (start !== -1) parsed = JSON.parse(parsed.slice(start)); }
+              }
+              S.imgAnalysis = parsed;
+            }
+          } catch { /* partial chunk, continue */ }
+        }
+      }
+
+      // Reset chat since it's a new image
+      S.imgChatMsgs = [];
+      $('img-chat-messages').innerHTML = '';
+
+      imgProcessing.classList.add('hidden');
+      imgStudio.classList.remove('hidden');
+
+      // Populate preview
+      const prevImg = $('img-preview');
+      prevImg.src = S.imgBlobUrl;
+      const imgMetaDiv = $('img-meta');
+      const dim = await getImageDimensions(S.imgBlobUrl);
+      const kb = (file.size / 1024).toFixed(0);
+      imgMetaDiv.innerHTML = `<span class="v-meta-item">📸 ${file.name}</span><span class="v-meta-item">${dim.w}×${dim.h}</span><span class="v-meta-item">${kb} KB</span><span class="v-meta-item">${file.type}</span>`;
+
+      if (S.imgAnalysis) renderImageAnalysis(S.imgAnalysis);
+
+      // Extract color palette from the preview
+      buildImgPalette(S.imgBlobUrl);
+
+    } catch(e) {
+      imgProcessing.classList.add('hidden');
+      imgUpload.classList.remove('hidden');
+      toast(e.message || 'Analysis failed', 'error');
+    }
+  }
+
+  function getImageDimensions(src) {
+    return new Promise(res => {
+      const i = new Image(); i.onload = () => res({w: i.naturalWidth, h: i.naturalHeight}); i.src = src;
+    });
+  }
+
+  // ── Render analysis ──────────────────────────────────────────────────────
+  window.renderImageAnalysis = function(d) {
+    if (!d) return;
+
+    // Description
+    setText('img-desc', d.description || d.scene_description || '—');
+
+    // Objects
+    const objList = $('img-objects');
+    if (objList) {
+      const items = d.objects || d.main_subjects || [];
+      objList.innerHTML = items.length
+        ? items.map(o => {
+            const name = typeof o === 'string' ? o : (o.name || o.object || JSON.stringify(o));
+            const conf = typeof o === 'object' && o.confidence ? ` <span style="color:var(--text3);font-size:10px">${Math.round(o.confidence*100)}%</span>` : '';
+            return `<span class="img-tag">${esc(name)}${conf}</span>`;
+          }).join('')
+        : '<span style="color:var(--text3);font-size:12px">No objects detected</span>';
+    }
+
+    // Faces
+    const faces = d.faces || d.people || [];
+    setText('img-faces', faces.length === 0
+      ? 'No faces detected'
+      : faces.map(f => {
+          if (typeof f === 'string') return `• ${f}`;
+          const parts = [];
+          if (f.count !== undefined) parts.push(`${f.count} ${f.count === 1 ? 'person' : 'people'}`);
+          if (f.age_range) parts.push(`Age: ${f.age_range}`);
+          if (f.expression || f.emotion) parts.push(f.expression || f.emotion);
+          if (f.gender) parts.push(f.gender);
+          if (f.description) parts.push(f.description);
+          return '• ' + (parts.join(' · ') || JSON.stringify(f));
+        }).join('\n'));
+
+    // Composition
+    const comp = d.composition || {};
+    setText('img-composition', typeof comp === 'string' ? comp : [
+      comp.rule_of_thirds !== undefined ? `Rule of thirds: ${comp.rule_of_thirds ? '✓' : '✗'}` : '',
+      comp.balance ? `Balance: ${comp.balance}` : '',
+      comp.leading_lines ? `Leading lines: ${comp.leading_lines}` : '',
+      comp.framing ? `Framing: ${comp.framing}` : '',
+      comp.depth ? `Depth: ${comp.depth}` : '',
+      comp.symmetry ? `Symmetry: ${comp.symmetry}` : '',
+      comp.perspective ? `Perspective: ${comp.perspective}` : '',
+      comp.notes ? comp.notes : '',
+    ].filter(Boolean).join('\n') || JSON.stringify(comp));
+
+    // Lighting
+    const light = d.lighting || {};
+    setText('img-lighting', typeof light === 'string' ? light : [
+      light.type ? `Type: ${light.type}` : '',
+      light.direction ? `Direction: ${light.direction}` : '',
+      light.quality ? `Quality: ${light.quality}` : '',
+      light.color_temperature ? `Color temp: ${light.color_temperature}` : '',
+      light.shadows ? `Shadows: ${light.shadows}` : '',
+      (d.mood || light.mood) ? `Mood: ${d.mood || light.mood}` : '',
+    ].filter(Boolean).join('\n') || JSON.stringify(light));
+
+    // Technical
+    const tech = d.technical_details || d.technical || {};
+    setText('img-technical', typeof tech === 'string' ? tech : [
+      tech.estimated_focal_length ? `Focal length: ${tech.estimated_focal_length}` : '',
+      tech.aperture ? `Aperture: ${tech.aperture}` : '',
+      tech.depth_of_field ? `DoF: ${tech.depth_of_field}` : '',
+      tech.shutter_speed ? `Shutter: ${tech.shutter_speed}` : '',
+      tech.iso ? `ISO: ${tech.iso}` : '',
+      tech.camera_angle ? `Angle: ${tech.camera_angle}` : '',
+      tech.lens_type ? `Lens: ${tech.lens_type}` : '',
+      tech.post_processing ? `Post: ${tech.post_processing}` : '',
+    ].filter(Boolean).join('\n') || (Object.keys(tech).length ? JSON.stringify(tech) : 'No EXIF data available'));
+
+    // Quality score
+    const qual = d.quality || {};
+    const score = qual.overall_score ?? qual.score ?? d.quality_score ?? null;
+    const qParts = [];
+    if (score !== null) qParts.push(`Overall: ${score}/10`);
+    if (qual.sharpness) qParts.push(`Sharpness: ${qual.sharpness}`);
+    if (qual.exposure) qParts.push(`Exposure: ${qual.exposure}`);
+    if (qual.noise) qParts.push(`Noise: ${qual.noise}`);
+    if (qual.color_accuracy) qParts.push(`Color: ${qual.color_accuracy}`);
+    if (qual.composition_score) qParts.push(`Composition: ${qual.composition_score}`);
+    setText('img-quality', qParts.join('\n') || (typeof qual === 'string' ? qual : JSON.stringify(qual)));
+
+    // Score badge on preview
+    if (score !== null) {
+      const badges = $('img-overlay-badges');
+      if (badges) badges.innerHTML = `<span class="img-score-badge">${score}/10</span>`;
+    }
+
+    // Strengths & Improvements
+    const str = d.strengths || [];
+    const imp = d.improvements || d.suggested_improvements || [];
+    const strHtml = str.length ? `<div class="img-si-group"><div class="img-si-label" style="color:var(--green)">✓ Strengths</div>${str.map(s=>`<div class="img-si-item">• ${esc(s)}</div>`).join('')}</div>` : '';
+    const impHtml = imp.length ? `<div class="img-si-group"><div class="img-si-label" style="color:var(--amber)">↑ Improvements</div>${imp.map(s=>`<div class="img-si-item">• ${esc(s)}</div>`).join('')}</div>` : '';
+    const stEl = $('img-strengths');
+    if (stEl) stEl.innerHTML = strHtml + impHtml || '<span style="color:var(--text3)">—</span>';
+
+    // AI Regeneration prompt
+    const prompt = d.ai_generation_prompt || d.generation_prompt || d.stable_diffusion_prompt || '';
+    const pEl = $('img-prompt');
+    if (pEl) { pEl.textContent = prompt || '—'; pEl.dataset.prompt = prompt; }
+
+    // Edit suggestions
+    const edits = d.edit_suggestions || d.editing_suggestions || [];
+    setText('img-edits', edits.length
+      ? edits.map((e,i) => `${i+1}. ${typeof e === 'string' ? e : (e.suggestion || JSON.stringify(e))}`).join('\n')
+      : (d.style ? `Style: ${d.style}` : '—'));
+
+    // Tags
+    const tags = d.tags || d.keywords || [];
+    const tagsEl = $('img-tags');
+    if (tagsEl) {
+      tagsEl.innerHTML = tags.length
+        ? tags.map(t => `<span class="img-tag img-tag-sm">${esc(typeof t === 'string' ? t : String(t))}</span>`).join('')
+        : '<span style="color:var(--text3);font-size:12px">—</span>';
+    }
+  };
+
+  function setText(id, val) {
+    const el = $(id); if (!el) return;
+    el.style.whiteSpace = 'pre-wrap';
+    el.textContent = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+  }
+
+  // ── Color palette ─────────────────────────────────────────────────────────
+  async function buildImgPalette(src) {
+    const palEl = $('img-palette');
+    if (!palEl) return;
+    palEl.innerHTML = '<div class="palette-loading">Extracting colors…</div>';
+    const colors = await extractPaletteFromImg(src, 10);
+    if (!colors.length) { palEl.innerHTML = '<div class="palette-loading">Could not extract palette</div>'; return; }
+    palEl.innerHTML = colors.map(hex => {
+      const textColor = hexLuminance(hex) > 0.4 ? '#111' : '#fff';
+      return `<div class="palette-swatch" style="background:${hex}" title="${hex}" onclick="copyText('${hex}')"><span class="palette-hex" style="color:${textColor}">${hex}</span></div>`;
+    }).join('');
+  }
+
+  function hexLuminance(hex) {
+    const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+    return 0.2126*r + 0.7152*g + 0.0722*b;
+  }
+
+  // ── Copy AI generation prompt ─────────────────────────────────────────────
+  window.copyImagePrompt = function() {
+    const el = $('img-prompt');
+    const text = el?.dataset.prompt || el?.textContent || '';
+    navigator.clipboard.writeText(text).then(() => toast('Prompt copied!', 'success')).catch(() => toast('Copy failed', 'error'));
+  };
+
+  // ── Image Q&A chat ────────────────────────────────────────────────────────
+  window.sendImageChat = async function() {
+    const input = $('img-chat-input');
+    const text = input?.value.trim();
+    if (!text || S.imgChatStreaming) return;
+    if (!S.imgFileId) { toast('No image analyzed yet', 'error'); return; }
+    input.value = '';
+
+    S.imgChatMsgs.push({role:'user', content: text});
+    const chatEl = $('img-chat-messages');
+    chatEl.innerHTML += `<div class="img-chat-msg img-chat-user"><div class="img-chat-bubble">${esc(text)}</div></div>`;
+
+    const aiBubble = document.createElement('div');
+    aiBubble.className = 'img-chat-msg img-chat-ai';
+    aiBubble.innerHTML = '<div class="img-chat-bubble"><div class="tool-spinner" style="width:14px;height:14px;display:inline-block"></div></div>';
+    chatEl.appendChild(aiBubble);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    S.imgChatStreaming = true;
+
+    const model = $('img-model-select')?.value || 'claude-opus-4-8';
+    const fd = new FormData();
+    fd.append('file_id', S.imgFileId);
+    fd.append('messages', JSON.stringify(S.imgChatMsgs));
+    fd.append('model', model);
+
+    try {
+      const resp = await fetch(`${API}/api/image-chat`, {method:'POST', body:fd});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail || resp.statusText);
+
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', fullText = '';
+      const bubble = aiBubble.querySelector('.img-chat-bubble');
+      bubble.innerHTML = '';
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'text' && evt.text) {
+              fullText += evt.text;
+              bubble.innerHTML = md(fullText);
+              hljs.highlightAll();
+              chatEl.scrollTop = chatEl.scrollHeight;
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
+      S.imgChatMsgs.push({role:'assistant', content: fullText});
+    } catch(e) {
+      aiBubble.querySelector('.img-chat-bubble').textContent = '⚠ ' + e.message;
+    } finally {
+      S.imgChatStreaming = false;
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+  };
+
+})(); // end initImageStudio
+
 // ── Global expose ───────────────────────────────────────────────────────────
 window.copyCode = copyCode;
 window.toggleThinking = h => { h.classList.toggle('collapsed'); h.parentElement.querySelector('.thinking-content').classList.toggle('hidden'); };
@@ -2091,6 +2482,7 @@ window.runSilenceDetect = runSilenceDetect;
 window.removeSilences = removeSilences;
 window.exportAspectRatio = exportAspectRatio;
 window.generateVoiceover = generateVoiceover;
+// Image Studio (functions set inside IIFE, already on window)
 
 // ── Init ────────────────────────────────────────────────────────────────────
 el.input.focus();

@@ -40,6 +40,10 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
         Video Studio
       </button>
+      <button class="mode-btn" data-mode="image">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        Image Studio
+      </button>
     </div>
 
     <div class="sb-section" id="chat-sidebar">
@@ -90,6 +94,33 @@
         <div class="cap-badge">📥 SRT / EDL / FFmpeg</div>
         <div class="cap-badge">📱 Shorts Optimizer</div>
         <div class="cap-badge">🎬 Storyboard</div>
+      </div>
+    </div>
+
+    <div class="sb-section hidden" id="img-sidebar">
+      <div class="sb-label">Analysis Model</div>
+      <select id="img-model-select" class="model-select">
+        <option value="claude-opus-4-8">Opus 4.8 ✦ (Best Vision)</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-fable-5">Fable 5 ✦✦</option>
+      </select>
+
+      <div class="sb-label" style="margin-top:12px">Capture</div>
+      <button class="upload-btn" id="img-webcam-btn" style="width:100%;justify-content:center;margin-bottom:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12C2 6.5 6.5 2 12 2s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/><circle cx="12" cy="12" r="6" stroke-opacity=".3"/></svg>
+        Open Webcam
+      </button>
+
+      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-caps">
+        <div class="cap-badge">🔍 Deep Object Detection</div>
+        <div class="cap-badge">😊 Facial Analysis</div>
+        <div class="cap-badge">🎨 Color DNA Palette</div>
+        <div class="cap-badge">📐 Composition Score</div>
+        <div class="cap-badge">💡 Lighting Analysis</div>
+        <div class="cap-badge">⚙️ EXIF &amp; Technical</div>
+        <div class="cap-badge">✨ AI Regenerate Prompt</div>
+        <div class="cap-badge">💬 Chat with Image</div>
       </div>
     </div>
   </aside>
@@ -295,6 +326,163 @@
             <div id="tab-ffmpeg" class="tab-panel hidden"></div>
             <div id="tab-shorts" class="tab-panel hidden"></div>
             <div id="tab-export" class="tab-panel hidden"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════ IMAGE INTELLIGENCE STUDIO ════════ -->
+    <div id="image-view" class="hidden">
+
+      <!-- Upload zone -->
+      <div id="img-upload" class="img-upload">
+        <div class="img-drop" id="img-drop">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="url(#ig)" stroke-width="1.3">
+            <defs><linearGradient id="ig" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#06b6d4"/></linearGradient></defs>
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <h2>Drop an image here</h2>
+          <p>PNG · JPG · WEBP · GIF · BMP · up to 20 MB</p>
+          <div class="img-drop-btns">
+            <button class="upload-btn" id="img-pick-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose Image
+            </button>
+            <button class="upload-btn upload-btn-secondary" id="img-cam-trigger-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12C2 6.5 6.5 2 12 2s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/></svg>
+              Webcam
+            </button>
+          </div>
+          <input type="file" id="img-file-input" accept="image/*" hidden/>
+        </div>
+        <!-- Webcam panel -->
+        <div id="img-webcam-panel" class="img-webcam-panel hidden">
+          <video id="img-webcam-video" class="img-webcam-video" autoplay playsinline muted></video>
+          <div class="img-webcam-controls">
+            <button class="upload-btn" id="img-capture-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+              Capture
+            </button>
+            <button class="action-btn action-ghost" id="img-cam-close-btn">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analyzing -->
+      <div id="img-processing" class="img-processing hidden">
+        <div class="v-proc-inner">
+          <div class="big-spinner"></div>
+          <div>
+            <div class="proc-title">Analyzing Image…</div>
+            <div id="img-proc-sub" class="proc-sub">Uploading to AI</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Studio workspace -->
+      <div id="img-studio" class="img-studio hidden">
+        <div class="img-topbar">
+          <div id="img-meta" class="img-meta"></div>
+          <div class="studio-actions">
+            <button id="img-reanalyze-btn" class="action-btn action-primary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+              Re-Analyze
+            </button>
+            <button id="img-reset-btn" class="action-btn action-ghost">New Image</button>
+          </div>
+        </div>
+
+        <div class="img-workspace">
+          <!-- Left: image preview -->
+          <div class="img-preview-col">
+            <div class="img-preview-wrap">
+              <img id="img-preview" class="img-preview" alt="Analyzed image"/>
+              <div id="img-overlay-badges" class="img-overlay-badges"></div>
+            </div>
+            <!-- Color palette extracted -->
+            <div class="img-card" id="img-palette-card">
+              <div class="img-card-title">🎨 Color DNA</div>
+              <div id="img-palette" class="palette-wrap"><div class="palette-loading">Extracting…</div></div>
+            </div>
+            <!-- Tags -->
+            <div class="img-card" id="img-tags-card">
+              <div class="img-card-title">🏷 Tags</div>
+              <div id="img-tags" class="img-tags-wrap"></div>
+            </div>
+          </div>
+
+          <!-- Right: analysis panels -->
+          <div class="img-analysis-col">
+            <div id="img-desc-card" class="img-card">
+              <div class="img-card-title">📝 Description</div>
+              <div id="img-desc" class="img-card-body"></div>
+            </div>
+
+            <div class="img-cards-row">
+              <div id="img-objects-card" class="img-card">
+                <div class="img-card-title">🔍 Objects &amp; Subjects</div>
+                <div id="img-objects" class="img-tag-list"></div>
+              </div>
+              <div id="img-faces-card" class="img-card">
+                <div class="img-card-title">😊 Faces &amp; People</div>
+                <div id="img-faces" class="img-card-body"></div>
+              </div>
+            </div>
+
+            <div class="img-cards-row">
+              <div id="img-composition-card" class="img-card">
+                <div class="img-card-title">📐 Composition</div>
+                <div id="img-composition" class="img-card-body"></div>
+              </div>
+              <div id="img-lighting-card" class="img-card">
+                <div class="img-card-title">💡 Lighting &amp; Mood</div>
+                <div id="img-lighting" class="img-card-body"></div>
+              </div>
+            </div>
+
+            <div class="img-cards-row">
+              <div id="img-technical-card" class="img-card">
+                <div class="img-card-title">⚙️ Technical</div>
+                <div id="img-technical" class="img-card-body"></div>
+              </div>
+              <div id="img-quality-card" class="img-card">
+                <div class="img-card-title">⭐ Quality Score</div>
+                <div id="img-quality" class="img-card-body"></div>
+              </div>
+            </div>
+
+            <div id="img-strengths-card" class="img-card">
+              <div class="img-card-title">💪 Strengths &amp; Improvements</div>
+              <div id="img-strengths" class="img-card-body"></div>
+            </div>
+
+            <div id="img-prompt-card" class="img-card img-prompt-card">
+              <div class="img-card-title">✨ AI Regeneration Prompt
+                <button class="field-copy-btn" onclick="copyImagePrompt()">Copy</button>
+              </div>
+              <div id="img-prompt" class="img-prompt-text"></div>
+            </div>
+
+            <div id="img-edit-card" class="img-card">
+              <div class="img-card-title">🖌 Edit Suggestions</div>
+              <div id="img-edits" class="img-card-body"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Q&A chat about the image -->
+        <div class="img-chat-wrap">
+          <div class="img-chat-title">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Chat with this Image
+          </div>
+          <div id="img-chat-messages" class="img-chat-messages"></div>
+          <div class="img-chat-input-row">
+            <input id="img-chat-input" class="vqa-input" type="text" placeholder="Ask anything about this image…" onkeydown="if(event.key==='Enter')sendImageChat()"/>
+            <button class="vqa-send" onclick="sendImageChat()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
           </div>
         </div>
 
