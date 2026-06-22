@@ -13,12 +13,13 @@ import tempfile
 import subprocess
 from typing import AsyncGenerator, List
 
-import anthropic
 try:
     import cv2
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
+
+import google.generativeai as genai
 from PIL import Image
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,8 +30,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="OmniAI — Multimodal AI Studio")
+genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", ""))
 
+app = FastAPI(title="OmniAI — Multimodal AI Studio")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,31 +41,155 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# ── Model aliases ────────────────────────────────────────────────────────────
+FLASH   = "gemini-2.0-flash"
+FLASH15 = "gemini-1.5-flash"
+PRO15   = "gemini-1.5-pro"
+
+def resolve_model(name: str) -> str:
+    mapping = {
+        "claude-opus-4-8": FLASH, "claude-opus-4-7": FLASH, "claude-opus-4-6": FLASH,
+        "claude-sonnet-4-6": FLASH, "claude-fable-5": PRO15,
+        "claude-haiku-4-5": FLASH15, "claude-haiku-4-5-20251001": FLASH15,
+    }
+    return mapping.get(name, name if name.startswith("gemini") else FLASH)
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "cv2": HAS_CV2}
+# ── Gemini Files API helpers ─────────────────────────────────────────────────
+
+async def gemini_upload(data, mime_type: str, display_name: str = "") -> genai.types.File:
+    loop = asyncio.get_event_loop()
+    if isinstance(data, bytes):
+        buf = io.BytesIO(data)
+        buf.name = display_name or "upload"
+        return await loop.run_in_executor(None, lambda: genai.upload_file(buf, mime_type=mime_type, display_name=display_name))
+    return await loop.run_in_executor(None, lambda: genai.upload_file(data, mime_type=mime_type, display_name=display_name))
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+async def gemini_get_file(name: str) -> genai.types.File:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: genai.get_file(name))
+
+
+async def wait_for_active(file_ref: genai.types.File, timeout: int = 120) -> genai.types.File:
+    elapsed = 0
+    while file_ref.state.name == "PROCESSING":
+        if elapsed >= timeout:
+            raise TimeoutError(f"File processing timeout: {file_ref.name}")
+        await asyncio.sleep(3)
+        elapsed += 3
+        file_ref = await gemini_get_file(file_ref.name)
+    if file_ref.state.name == "FAILED":
+        raise ValueError(f"File processing failed: {file_ref.name}")
+    return file_ref
+
+
+async def gemini_delete(name: str):
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, lambda: genai.delete_file(name))
+    except Exception:
+        pass
+
+
+def convert_content_to_parts(content) -> list:
+    """Convert Anthropic-format content to Gemini parts (sync, no file fetching)."""
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return [str(content)]
+    parts = []
+    seen_files: set[str] = set()
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type", "")
+        if btype == "text":
+            if block.get("text"):
+                parts.append(block["text"])
+        elif btype == "image":
+            source = block.get("source", {})
+            stype = source.get("type", "")
+            if stype == "file":
+                fid = source.get("file_id", "")
+                if fid and fid not in seen_files:
+                    seen_files.add(fid)
+                    try:
+                        parts.append(genai.get_file(fid))
+                    except Exception:
+                        pass
+            elif stype == "base64":
+                try:
+                    img = Image.open(io.BytesIO(base64.b64decode(source.get("data", ""))))
+                    parts.append(img)
+                except Exception:
+                    pass
+    return parts or [""]
+
+
+# ── Streaming helper ─────────────────────────────────────────────────────────
+
+async def gemini_stream(model_name: str, contents, max_tokens: int = 4096, system: str | None = None):
+    """Core SSE streaming generator — yields data: lines."""
+    m = (genai.GenerativeModel(model_name, system_instruction=system)
+         if system else genai.GenerativeModel(model_name))
+    cfg = genai.GenerationConfig(max_output_tokens=max_tokens)
+    full = ""
+    try:
+        resp = await m.generate_content_async(contents, generation_config=cfg, stream=True)
+        async for chunk in resp:
+            try:
+                t = chunk.text
+                if t:
+                    full += t
+                    yield f"data: {json.dumps({'type':'text','text':t})}\n\n"
+            except Exception:
+                pass
+    except Exception as e:
+        yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+    return full  # not used directly but keeps pattern clear
+
+
+async def gemini_stream_json(model_name: str, contents, max_tokens: int = 4096, system: str | None = None):
+    """Stream + parse final JSON. Yields text chunks then a 'result' event."""
+    m = (genai.GenerativeModel(model_name, system_instruction=system)
+         if system else genai.GenerativeModel(model_name))
+    cfg = genai.GenerationConfig(max_output_tokens=max_tokens)
+    full = ""
+    try:
+        resp = await m.generate_content_async(contents, generation_config=cfg, stream=True)
+        async for chunk in resp:
+            try:
+                t = chunk.text
+                if t:
+                    full += t
+                    yield f"data: {json.dumps({'type':'text','text':t})}\n\n"
+            except Exception:
+                pass
+        try:
+            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+            parsed = json.loads(clean)
+            yield f"data: {json.dumps({'type':'result','data':parsed})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e)})}\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+    yield f"data: {json.dumps({'type':'done'})}\n\n"
+
+
+# ── cv2 / FFmpeg helpers ─────────────────────────────────────────────────────
 
 def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dict]:
-    """Returns list of (main_jpeg_bytes, thumb_jpeg_bytes, timestamp_sec) tuples."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError("Cannot open video file")
-
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     duration_sec = total_frames / fps if fps > 0 else 0
-
     step = max(1, total_frames // max_frames)
     frame_indices = list(range(0, total_frames, step))[:max_frames]
-
     frames_data = []
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -71,8 +197,6 @@ def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dic
         if not ret:
             continue
         h, w = frame.shape[:2]
-
-        # Main frame for AI (max 1280px wide)
         if w > 1280:
             scale = 1280 / w
             main_frame = cv2.resize(frame, (1280, int(h * scale)), interpolation=cv2.INTER_AREA)
@@ -82,23 +206,15 @@ def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dic
         buf = io.BytesIO()
         Image.fromarray(rgb).save(buf, format="JPEG", quality=82)
         main_bytes = buf.getvalue()
-
-        # Thumbnail for filmstrip UI (160x90)
         thumb = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
         thumb_rgb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
         tbuf = io.BytesIO()
         Image.fromarray(thumb_rgb).save(tbuf, format="JPEG", quality=72)
-        thumb_bytes = tbuf.getvalue()
-
-        frames_data.append((main_bytes, thumb_bytes, idx / fps))
-
+        frames_data.append((main_bytes, tbuf.getvalue(), idx / fps))
     cap.release()
     return frames_data, {
-        "duration_sec": round(duration_sec, 3),
-        "fps": round(fps, 3),
-        "total_frames": total_frames,
-        "width": width,
-        "height": height,
+        "duration_sec": round(duration_sec, 3), "fps": round(fps, 3),
+        "total_frames": total_frames, "width": width, "height": height,
     }
 
 
@@ -106,19 +222,15 @@ def detect_scenes_cv2(video_path: str, threshold: float = 0.35) -> list[dict]:
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Sample at most every 5 frames for speed
     sample_step = max(1, total // 500)
     scenes = []
     prev_hist = None
     frame_idx = 0
-
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         if frame_idx % sample_step == 0:
-            # Resize for speed
             small = cv2.resize(frame, (160, 90))
             hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
             hist = cv2.normalize(hist, hist).flatten()
@@ -126,29 +238,23 @@ def detect_scenes_cv2(video_path: str, threshold: float = 0.35) -> list[dict]:
                 corr = float(cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL))
                 if corr < threshold:
                     scenes.append({
-                        "frame": frame_idx,
-                        "timestamp_sec": round(frame_idx / fps, 3),
-                        "timestamp": sec_to_tc(frame_idx / fps),
-                        "correlation": round(corr, 3),
+                        "frame": frame_idx, "timestamp_sec": round(frame_idx / fps, 3),
+                        "timestamp": sec_to_tc(frame_idx / fps), "correlation": round(corr, 3),
                     })
             prev_hist = hist
         frame_idx += 1
-
     cap.release()
     return scenes
 
 
 def detect_motion_energy(video_path: str, max_samples: int = 100) -> list[dict]:
-    """Return per-frame motion energy scores for timeline waveform."""
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     step = max(1, total // max_samples)
-
     energy = []
     prev_gray = None
     idx = 0
-
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -158,38 +264,28 @@ def detect_motion_energy(video_path: str, max_samples: int = 100) -> list[dict]:
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             if prev_gray is not None:
                 diff = cv2.absdiff(gray, prev_gray)
-                score = float(diff.mean()) / 255.0
-                energy.append({"t": round(idx / fps, 2), "e": round(score, 4)})
+                energy.append({"t": round(idx / fps, 2), "e": round(float(diff.mean()) / 255.0, 4)})
             prev_gray = gray
         idx += 1
-
     cap.release()
     return energy
 
 
 def sec_to_tc(sec: float, srt: bool = False) -> str:
-    """Convert seconds to timecode HH:MM:SS.mmm or SRT format."""
-    h = int(sec // 3600)
-    m = int((sec % 3600) // 60)
-    s = sec % 60
+    h = int(sec // 3600); m = int((sec % 3600) // 60); s = sec % 60
     if srt:
-        ms = int((s % 1) * 1000)
-        return f"{h:02d}:{m:02d}:{int(s):02d},{ms:03d}"
+        return f"{h:02d}:{m:02d}:{int(s):02d},{int((s%1)*1000):03d}"
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
 def sec_to_tc_short(sec: float) -> str:
-    m = int(sec // 60)
-    s = sec % 60
-    return f"{m}:{s:05.2f}"
+    return f"{int(sec//60)}:{sec%60:05.2f}"
 
 
 def extract_audio_waveform_ffmpeg(video_path: str, n_samples: int = 300) -> list[float]:
-    """Return RMS amplitude waveform from audio track using FFmpeg."""
     try:
         result = subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "8000",
-             "-f", "f32le", "pipe:1"],
+            ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", "pipe:1"],
             capture_output=True, timeout=90,
         )
         if not result.stdout:
@@ -198,11 +294,11 @@ def extract_audio_waveform_ffmpeg(video_path: str, n_samples: int = 300) -> list
         n_floats = len(raw) // 4
         if n_floats < 4:
             return []
-        pcm = struct.unpack(f"{n_floats}f", raw[: n_floats * 4])
+        pcm = struct.unpack(f"{n_floats}f", raw[:n_floats * 4])
         step = max(1, n_floats // n_samples)
         waveform: list[float] = []
         for i in range(0, n_floats, step):
-            chunk = pcm[i : i + step]
+            chunk = pcm[i:i + step]
             rms = math.sqrt(sum(x * x for x in chunk) / len(chunk))
             waveform.append(round(min(1.0, rms * 6), 4))
             if len(waveform) >= n_samples:
@@ -221,7 +317,6 @@ def ffmpeg_available() -> bool:
 
 
 def tc_to_sec(tc: str) -> float:
-    """Parse HH:MM:SS.mmm or HH:MM:SS,mmm timecode to seconds."""
     if not tc:
         return 0.0
     try:
@@ -232,90 +327,66 @@ def tc_to_sec(tc: str) -> float:
 
 
 def build_edit_filter(decisions: list) -> tuple[str, str]:
-    """Build FFmpeg filter_complex string for cut decisions.
-    Returns (filter_complex, output_maps). Empty strings if passthrough.
-    """
     keeps = [d for d in decisions if d.get("action") not in ("CUT", "FADE_IN", "FADE_OUT", "DISSOLVE")]
     if not keeps:
         return "", ""
-
     segments_v, segments_a = [], []
     valid = 0
-    for i, d in enumerate(keeps):
+    for d in keeps:
         in_s = tc_to_sec(d.get("in_point", "00:00:00.000"))
         out_s = tc_to_sec(d.get("out_point", "00:00:05.000"))
         if out_s <= in_s or (out_s - in_s) < 0.1:
             continue
         speed = max(0.25, min(4.0, float(d.get("speed") or 1.0)))
-
         vf = f"[0:v]trim={in_s:.3f}:{out_s:.3f},setpts=PTS-STARTPTS"
         if speed != 1.0:
             vf += f",setpts={1/speed:.4f}*PTS"
         vf += f"[v{valid}]"
         segments_v.append(vf)
-
         af = f"[0:a]atrim={in_s:.3f}:{out_s:.3f},asetpts=PTS-STARTPTS"
         if speed != 1.0 and 0.5 <= speed <= 2.0:
             af += f",atempo={speed:.4f}"
         af += f"[a{valid}]"
         segments_a.append(af)
         valid += 1
-
     if not segments_v:
         return "", ""
-
     n = valid
     concat_v = "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv_raw]"
     concat_a = "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[outa]"
-    fc = ";".join(segments_v + segments_a + [concat_v, concat_a])
-    return fc, "[outv_raw][outa]"
+    return ";".join(segments_v + segments_a + [concat_v, concat_a]), "[outv_raw][outa]"
 
 
 def build_color_filter(cg: dict) -> str:
-    """Build an FFmpeg vf filter chain from AI color_grade JSON."""
     if not cg:
         return ""
-
     exposure = float(cg.get("exposure", 0))
     contrast = float(cg.get("contrast", 0))
     saturation = float(cg.get("saturation", 0))
     vibrance = float(cg.get("vibrance", 0))
     highlights = float(cg.get("highlights", 0))
     shadows = float(cg.get("shadows", 0))
-
     brightness = max(-0.4, min(0.4, exposure / 10.0))
     ffmpeg_contrast = max(0.4, min(2.5, 1.0 + contrast / 100.0))
     ffmpeg_sat = max(0.0, min(2.5, 1.0 + (saturation + vibrance * 0.4) / 100.0))
-
     parts = [f"eq=brightness={brightness:.3f}:contrast={ffmpeg_contrast:.3f}:saturation={ffmpeg_sat:.3f}"]
-
-    # Highlights / shadows via master curves
     if abs(highlights) > 3 or abs(shadows) > 3:
         sh = max(-0.12, min(0.12, shadows / 100.0 * 0.12))
         hl = max(-0.12, min(0.12, highlights / 100.0 * 0.12))
         p1 = max(0.05, min(0.95, 0.25 + sh))
         p2 = max(0.05, min(0.95, 0.75 + hl))
         parts.append(f"curves=m='0/0 0.25/{p1:.3f} 0.75/{p2:.3f} 1/1'")
-
-    # Color temperature via RGB curves
     temp = float(cg.get("temperature", 5500))
     if temp < 4800:
         shift = min(0.14, (4800 - temp) / 4800.0 * 0.14)
-        parts.append(
-            f"curves=r='0/0 1/{min(1.0,1+shift):.3f}'"
-            f":b='0/0 1/{max(0.72,1-shift):.3f}'"
-        )
+        parts.append(f"curves=r='0/0 1/{min(1.0,1+shift):.3f}':b='0/0 1/{max(0.72,1-shift):.3f}'")
     elif temp > 6300:
         shift = min(0.1, (temp - 6300) / 6300.0 * 0.1)
-        parts.append(
-            f"curves=r='0/0 1/{max(0.82,1-shift):.3f}'"
-            f":b='0/0 1/{min(1.0,1+shift):.3f}'"
-        )
-
+        parts.append(f"curves=r='0/0 1/{max(0.82,1-shift):.3f}':b='0/0 1/{min(1.0,1+shift):.3f}'")
     return ",".join(parts)
 
 
-# ── Models ─────────────────────────────────────────────────────────────────
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class Message(BaseModel):
     role: str
@@ -324,10 +395,10 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message]
-    model: str = "claude-opus-4-8"
+    model: str = FLASH
     enable_thinking: bool = True
-    enable_web_search: bool = True
-    enable_code_execution: bool = True
+    enable_web_search: bool = False
+    enable_code_execution: bool = False
     system: str | None = None
 
 
@@ -338,10 +409,10 @@ class FileUploadResponse(BaseModel):
 
 
 class VideoFrame(BaseModel):
-    file_id: str
+    file_id: str        # Gemini Files API name for the whole video
     timestamp_sec: float
     frame_index: int
-    thumbnail_b64: str = ""  # data:image/jpeg;base64,... for filmstrip display
+    thumbnail_b64: str = ""
 
 
 class VideoExtractResponse(BaseModel):
@@ -356,72 +427,10 @@ class VideoExtractResponse(BaseModel):
     energy: list[dict]
 
 
-# ── Chat streaming ─────────────────────────────────────────────────────────
-
-def build_tools(ws: bool, ce: bool) -> list:
-    tools = []
-    if ws:
-        tools.append({"type": "web_search_20260209", "name": "web_search"})
-    if ce:
-        tools.append({"type": "code_execution_20260120", "name": "code_execution"})
-    return tools
-
-
-async def stream_response(request: ChatRequest) -> AsyncGenerator[str, None]:
-    tools = build_tools(request.enable_web_search, request.enable_code_execution)
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
-
-    system = request.system or (
-        "You are OmniAI, a highly capable multimodal AI assistant that understands text, images, "
-        "documents, video frames, and code. You can search the web and execute code."
-    )
-
-    kwargs = {
-        "model": request.model,
-        "max_tokens": 16000,
-        "system": system,
-        "messages": messages,
-    }
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["betas"] = ["web-search-2026-02-09", "code-execution-2026-01-20"]
-    if request.enable_thinking:
-        kwargs["thinking"] = {"type": "adaptive"}
-
-    try:
-        with client.messages.stream(**kwargs) as stream:
-            for event in stream:
-                t = type(event).__name__
-                if t == "RawContentBlockStartEvent":
-                    bt = getattr(event.content_block, "type", None)
-                    if bt == "thinking":
-                        yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
-                    elif bt == "text":
-                        yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
-                    elif bt == "tool_use":
-                        yield f"data: {json.dumps({'type': 'tool_start', 'tool': getattr(event.content_block, 'name', 'tool')})}\n\n"
-                elif t == "RawContentBlockDeltaEvent":
-                    dt = getattr(event.delta, "type", None)
-                    if dt == "thinking_delta":
-                        yield f"data: {json.dumps({'type': 'thinking', 'text': event.delta.thinking})}\n\n"
-                    elif dt == "text_delta":
-                        yield f"data: {json.dumps({'type': 'text', 'text': event.delta.text})}\n\n"
-                    elif dt == "input_json_delta":
-                        yield f"data: {json.dumps({'type': 'tool_input', 'text': event.delta.partial_json})}\n\n"
-                elif t == "RawContentBlockStopEvent":
-                    yield f"data: {json.dumps({'type': 'block_stop'})}\n\n"
-                elif t == "RawMessageStopEvent":
-                    yield f"data: {json.dumps({'type': 'done', 'stop_reason': stream.get_final_message().stop_reason})}\n\n"
-    except anthropic.APIError as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
-
-# ── AI Video Editor (structured JSON output) ────────────────────────────────
+# ── AI Edit prompt ────────────────────────────────────────────────────────────
 
 AI_EDIT_PROMPT = """You are a world-class video editor with 20 years of experience in Hollywood films, documentaries, and viral content.
-I am giving you {n} frames extracted from a video (duration: ~{duration}s, timestamps: {timestamps}).
+You are watching the full video (duration: ~{duration}s).
 
 Your job: produce a COMPLETE, PROFESSIONAL edit package as strict JSON. No prose before or after — ONLY the JSON object.
 
@@ -481,11 +490,11 @@ Your job: produce a COMPLETE, PROFESSIONAL edit package as strict JSON. No prose
     "music_sync_points": [
       {{"timestamp": "00:00:04.2", "type": "beat_hit|transition|drop|emotion_peak", "note": "Cut here on beat"}}
     ],
-    "music_genre_suggestion": "Electronic / Cinematic / Lo-fi / etc",
+    "music_genre_suggestion": "Electronic / Cinematic / Lo-fi",
     "audio_design_notes": "Specific sound design recommendations"
   }},
   "captions": [
-    {{"id": 1, "start": "00:00:00,000", "end": "00:00:02,500", "speaker": "Person 1", "text": "Inferred or visible dialogue"}}
+    {{"id": 1, "start": "00:00:00,000", "end": "00:00:02,500", "speaker": "Person 1", "text": "Transcribed dialogue"}}
   ],
   "broll_suggestions": [
     {{"at_timecode": "00:00:10.0", "suggestion": "Cutaway to close-up of hands", "reason": "Talking head needs visual relief"}}
@@ -507,36 +516,25 @@ Your job: produce a COMPLETE, PROFESSIONAL edit package as strict JSON. No prose
   }},
   "ffmpeg_commands": [
     {{
-      "label": "Remove silence at 3s-5s",
-      "command": "ffmpeg -i INPUT.mp4 -filter_complex \\"[0:v]trim=0:3,setpts=PTS-STARTPTS[v1];[0:v]trim=5,setpts=PTS-STARTPTS[v2];[v1][v2]concat=n=2:v=1[out]\\" -map \\"[out]\\" OUTPUT.mp4"
-    }},
-    {{
       "label": "Apply color grade",
-      "command": "ffmpeg -i INPUT.mp4 -vf \\"eq=brightness=0.05:contrast=1.15:saturation=1.2,curves=r='0/0 0.5/0.53 1/1':g='0/0 0.5/0.5 1/1':b='0/0 0.5/0.47 1/0.95'\\" OUTPUT_graded.mp4"
+      "command": "ffmpeg -i INPUT.mp4 -vf \\"eq=brightness=0.05:contrast=1.15:saturation=1.2\\" OUTPUT_graded.mp4"
     }},
     {{
       "label": "Export vertical Shorts (9:16)",
       "command": "ffmpeg -i INPUT.mp4 -vf \\"crop=ih*9/16:ih\\" -ss 00:00:15 -to 00:00:45 SHORTS.mp4"
-    }},
-    {{
-      "label": "Speed up slow sections",
-      "command": "ffmpeg -i INPUT.mp4 -filter:v \\"setpts=0.5*PTS\\" -filter:a \\"atempo=2.0\\" OUTPUT_fast.mp4"
     }}
   ],
-  "top_issues": [
-    "Issue 1 with specific timecode",
-    "Issue 2"
-  ],
-  "top_strengths": [
-    "Strength 1",
-    "Strength 2"
-  ],
-  "recommended_final_duration": 45.0
+  "social_content": {{
+    "youtube_title": "Engaging YouTube title under 60 chars",
+    "youtube_description": "3-paragraph YouTube description with timestamps",
+    "youtube_tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+    "instagram_caption": "Instagram caption under 220 chars with 5 hashtags",
+    "tiktok_hook": "First 3 seconds hook description",
+    "twitter_thread": ["Tweet 1/3: hook", "Tweet 2/3: main point", "Tweet 3/3: CTA"],
+    "linkedin_post": "Professional LinkedIn post under 300 chars"
+  }}
 }}
 
-Estimate all timestamps from the provided frame positions. Be creative, specific, and professional.
-Generate realistic dialogue for captions based on visual context.
-The FFmpeg commands must be VALID and EXECUTABLE — use real filter syntax.
 Output ONLY the JSON. No markdown code blocks, no explanation."""
 
 
@@ -547,48 +545,89 @@ async def stream_ai_edit(
     duration: float,
     edit_instructions: str = "",
 ) -> AsyncGenerator[str, None]:
-    n = len(frame_file_ids)
-    ts_str = str([round(t, 1) for t in timestamps])
+    model_name = resolve_model(model)
+    if not frame_file_ids:
+        yield f"data: {json.dumps({'type':'error','message':'No video file provided'})}\n\n"
+        return
 
-    prompt = AI_EDIT_PROMPT.format(n=n, duration=round(duration, 1), timestamps=ts_str)
+    # All frame_ids are the same Gemini video file name
+    video_file_name = frame_file_ids[0]
+    try:
+        video_file = await gemini_get_file(video_file_name)
+        video_file = await wait_for_active(video_file)
+    except Exception as e:
+        yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        return
+
+    prompt = AI_EDIT_PROMPT.format(duration=round(duration, 1))
     if edit_instructions.strip():
-        prompt += f"\n\nDirector's additional instructions: {edit_instructions.strip()}\nPrioritize these instructions when making edit decisions."
-
-    content = [{"type": "text", "text": prompt}]
-    for i, fid in enumerate(frame_file_ids):
-        content.append({"type": "image", "source": {"type": "file", "file_id": fid}})
-        content.append({"type": "text", "text": f"[Frame {i+1} @ {timestamps[i]:.1f}s]"})
+        prompt += f"\n\nDirector's additional instructions: {edit_instructions.strip()}\nPrioritize these instructions."
 
     full_text = ""
+    async for line in gemini_stream_json(model_name, [video_file, prompt], max_tokens=8000):
+        # Replace 'result' event key for ai-edit compatibility
+        if line.startswith("data: "):
+            try:
+                ev = json.loads(line[6:])
+                if ev.get("type") == "text":
+                    full_text += ev.get("text", "")
+                    yield f"data: {json.dumps({'type':'chunk','text':ev['text']})}\n\n"
+                elif ev.get("type") == "result":
+                    yield f"data: {json.dumps({'type':'result','data':ev['data']})}\n\n"
+                elif ev.get("type") == "parse_error":
+                    yield f"data: {json.dumps({'type':'parse_error','raw':full_text,'error':ev.get('error','')})}\n\n"
+                elif ev.get("type") == "done":
+                    yield f"data: {json.dumps({'type':'done'})}\n\n"
+                elif ev.get("type") == "error":
+                    yield line
+            except Exception:
+                yield line
+        else:
+            yield line
+
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+async def stream_response(request: ChatRequest) -> AsyncGenerator[str, None]:
+    model_name = resolve_model(request.model)
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    system = request.system or (
+        "You are OmniAI, a highly capable multimodal AI assistant. "
+        "You understand text, images, documents, video, and code. "
+        "Answer concisely and helpfully."
+    )
+
+    gemini_history = []
+    for msg in messages[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        parts = convert_content_to_parts(msg["content"])
+        if parts:
+            gemini_history.append({"role": role, "parts": parts})
+
+    last_parts = convert_content_to_parts(messages[-1]["content"]) if messages else [""]
+
+    m = genai.GenerativeModel(model_name, system_instruction=system)
+    cfg = genai.GenerationConfig(max_output_tokens=16000)
+    chat = m.start_chat(history=gemini_history)
     try:
-        with client.messages.stream(
-            model=model,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": content}],
-            betas=["files-api-2025-04-14"],
-        ) as stream:
-            for event in stream:
-                t = type(event).__name__
-                if t == "RawContentBlockDeltaEvent":
-                    dt = getattr(event.delta, "type", None)
-                    if dt == "text_delta":
-                        full_text += event.delta.text
-                        yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
-                elif t == "RawMessageStopEvent":
-                    # Try to parse JSON
-                    try:
-                        # Remove any markdown code fences
-                        clean = re.sub(r"```(?:json)?\s*", "", full_text).strip()
-                        parsed = json.loads(clean)
-                        yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
-                    except json.JSONDecodeError as e:
-                        yield f"data: {json.dumps({'type': 'parse_error', 'raw': full_text, 'error': str(e)})}\n\n"
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        resp = await chat.send_message_async(last_parts, generation_config=cfg, stream=True)
+        async for chunk in resp:
+            try:
+                if chunk.text:
+                    yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+            except Exception:
+                pass
+        yield f"data: {json.dumps({'type':'done','stop_reason':'end_turn'})}\n\n"
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "provider": "gemini", "cv2": HAS_CV2}
+
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
@@ -605,16 +644,9 @@ async def upload_file(file: UploadFile = File(...)):
     media_type = file.content_type or "application/octet-stream"
     if len(content) > 32 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 32MB)")
-    supported = {
-        "image/jpeg", "image/png", "image/gif", "image/webp",
-        "application/pdf", "text/plain", "text/html", "text/css",
-        "text/javascript", "text/markdown", "text/csv", "application/json",
-    }
-    if media_type not in supported:
-        raise HTTPException(status_code=415, detail=f"Unsupported: {media_type}")
     try:
-        uploaded = client.beta.files.upload(file=(file.filename, content, media_type))
-        return FileUploadResponse(file_id=uploaded.id, filename=file.filename, media_type=media_type)
+        uploaded = await gemini_upload(content, media_type, file.filename or "upload")
+        return FileUploadResponse(file_id=uploaded.name, filename=file.filename or "", media_type=media_type)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -626,14 +658,12 @@ async def extract_video_frames(
 ):
     video_types = {
         "video/mp4", "video/quicktime", "video/x-msvideo",
-        "video/x-matroska", "video/webm", "video/mpeg",
-        "video/3gpp", "video/x-flv",
+        "video/x-matroska", "video/webm", "video/mpeg", "video/3gpp", "video/x-flv",
     }
     filename = file.filename or "video.mp4"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp4"
     video_exts = {"mp4", "mov", "avi", "mkv", "webm", "mpeg", "mpg", "3gp", "flv", "m4v"}
-
-    media_type = file.content_type or ""
+    media_type = file.content_type or f"video/{ext}"
     if media_type not in video_types and ext not in video_exts:
         raise HTTPException(status_code=415, detail=f"Not a video file: {media_type}")
 
@@ -646,31 +676,47 @@ async def extract_video_frames(
         tmp.write(content)
         tmp_path = tmp.name
 
-    if not HAS_CV2:
-        os.unlink(tmp_path)
-        raise HTTPException(status_code=503, detail="Video processing unavailable in this environment (opencv not installed)")
     try:
-        max_frames = min(max(1, max_frames), 30)
-        frames_data, meta = extract_frames_cv2(tmp_path, max_frames)
-        scenes = detect_scenes_cv2(tmp_path)
-        energy = detect_motion_energy(tmp_path)
-        audio_waveform = extract_audio_waveform_ffmpeg(tmp_path) if ffmpeg_available() else []
+        # Upload entire video to Gemini Files API
+        video_file = await gemini_upload(content, media_type, filename)
+
+        # Extract thumbnails with cv2 for filmstrip UI
+        frames_data, meta = [], {"duration_sec": 0, "fps": 25.0, "total_frames": 0, "width": 0, "height": 0}
+        scenes, energy, audio_waveform = [], [], []
+        if HAS_CV2:
+            try:
+                max_frames = min(max(1, max_frames), 30)
+                frames_data, meta = extract_frames_cv2(tmp_path, max_frames)
+                scenes = detect_scenes_cv2(tmp_path)
+                energy = detect_motion_energy(tmp_path)
+            except Exception:
+                pass
+        if ffmpeg_available():
+            audio_waveform = extract_audio_waveform_ffmpeg(tmp_path)
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
-    if not frames_data:
-        raise HTTPException(status_code=422, detail="Could not extract frames")
-
+    # Build frames array — all share the same Gemini video file name
     video_frames = []
-    for i, (main_bytes, thumb_bytes, ts) in enumerate(frames_data):
-        frame_name = f"frame_{i:03d}_{ts:.1f}s.jpg"
-        uploaded = client.beta.files.upload(file=(frame_name, main_bytes, "image/jpeg"))
-        thumb_b64 = "data:image/jpeg;base64," + base64.b64encode(thumb_bytes).decode()
+    if frames_data:
+        for i, (_, thumb_bytes, ts) in enumerate(frames_data):
+            thumb_b64 = "data:image/jpeg;base64," + base64.b64encode(thumb_bytes).decode()
+            video_frames.append(VideoFrame(
+                file_id=video_file.name,
+                timestamp_sec=round(ts, 2),
+                frame_index=i,
+                thumbnail_b64=thumb_b64,
+            ))
+    else:
+        # No cv2 — create a single placeholder frame entry
         video_frames.append(VideoFrame(
-            file_id=uploaded.id,
-            timestamp_sec=round(ts, 2),
-            frame_index=i,
-            thumbnail_b64=thumb_b64,
+            file_id=video_file.name,
+            timestamp_sec=0.0,
+            frame_index=0,
+            thumbnail_b64="",
         ))
 
     return {
@@ -687,7 +733,7 @@ async def extract_video_frames(
 async def ai_edit(
     frame_ids: str = Form(...),
     timestamps: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
     duration: float = Form(0),
     edit_instructions: str = Form(""),
 ):
@@ -712,48 +758,21 @@ async def export_srt(captions: str = Form(...), filename: str = Form("subtitles"
         caps = json.loads(captions)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid captions JSON")
-
     lines = []
     for i, c in enumerate(caps, 1):
-        lines.append(str(i))
-        lines.append(f"{c.get('start', '00:00:00,000')} --> {c.get('end', '00:00:02,000')}")
-        speaker = f"[{c['speaker']}] " if c.get("speaker") else ""
-        lines.append(f"{speaker}{c.get('text', '')}")
-        lines.append("")
-
-    srt_content = "\n".join(lines)
-    return Response(
-        content=srt_content,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}.srt"'},
-    )
+        lines += [str(i), f"{c.get('start','00:00:00,000')} --> {c.get('end','00:00:02,000')}",
+                  f"{'['+c['speaker']+'] ' if c.get('speaker') else ''}{c.get('text','')}", ""]
+    return Response(content="\n".join(lines), media_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}.srt"'})
 
 
 @app.post("/api/export-edl")
-async def export_edl(
-    edit_decisions: str = Form(...),
-    filename: str = Form("edit"),
-    fps: float = Form(25.0),
-):
+async def export_edl(edit_decisions: str = Form(...), filename: str = Form("edit"), fps: float = Form(25.0)):
     try:
         decisions = json.loads(edit_decisions)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid JSON")
-
-    def tc_to_frames(tc: str, fps: float) -> int:
-        parts = tc.replace(",", ".").split(":")
-        try:
-            h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
-        except (IndexError, ValueError):
-            return 0
-        total_sec = h * 3600 + m * 60 + s
-        return int(total_sec * fps)
-
-    lines = [
-        "TITLE: OmniAI Edit",
-        f"FCM: NON-DROP FRAME",
-        "",
-    ]
+    lines = ["TITLE: OmniAI Edit", "FCM: NON-DROP FRAME", ""]
     event_num = 1
     for d in decisions:
         if d.get("action") in ("KEEP", "TRIM", "SPEED"):
@@ -764,184 +783,154 @@ async def export_edl(
                 lines.append(f"* FROM CLIP NAME: {d['reason'][:60]}")
             lines.append("")
             event_num += 1
-
-    edl_content = "\n".join(lines)
-    return Response(
-        content=edl_content,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}.edl"'},
-    )
+    return Response(content="\n".join(lines), media_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}.edl"'})
 
 
 @app.post("/api/export-ffmpeg-script")
-async def export_ffmpeg_script(
-    commands: str = Form(...),
-    filename: str = Form("edit_script"),
-):
+async def export_ffmpeg_script(commands: str = Form(...), filename: str = Form("edit_script")):
     try:
         cmds = json.loads(commands)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid JSON")
-
     lines = [
-        "#!/bin/bash",
-        "# OmniAI — Auto-generated FFmpeg Edit Script",
-        "# Replace INPUT.mp4 with your actual video file",
-        "",
-        'INPUT="$1"',
-        'if [ -z "$INPUT" ]; then',
-        '  echo "Usage: ./edit_script.sh your_video.mp4"',
-        "  exit 1",
-        "fi",
-        "",
+        "#!/bin/bash", "# OmniAI — Auto-generated FFmpeg Edit Script",
+        "# Replace INPUT.mp4 with your actual video file", "",
+        'INPUT="$1"', 'if [ -z "$INPUT" ]; then',
+        '  echo "Usage: ./edit_script.sh your_video.mp4"', "  exit 1", "fi", "",
     ]
     for i, cmd in enumerate(cmds, 1):
         label = cmd.get("label", f"Step {i}")
         command = cmd.get("command", "").replace("INPUT.mp4", '"$INPUT"')
-        lines.append(f"# Step {i}: {label}")
-        lines.append(command)
-        lines.append("")
-
-    script = "\n".join(lines)
-    return Response(
-        content=script,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}.sh"'},
-    )
+        lines += [f"# Step {i}: {label}", command, ""]
+    return Response(content="\n".join(lines), media_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}.sh"'})
 
 
-@app.delete("/api/files/{file_id}")
+@app.delete("/api/files/{file_id:path}")
 async def delete_file(file_id: str):
-    try:
-        client.beta.files.delete(file_id)
-        return {"status": "deleted", "file_id": file_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    await gemini_delete(file_id)
+    return {"deleted": file_id}
 
 
 @app.post("/api/process-video")
-async def process_video_op(
+async def process_video(
     file: UploadFile = File(...),
-    operation: str = Form("full_edit"),   # full_edit | shorts | color_grade | custom_format
-    edit_decisions: str = Form("[]"),
-    color_grade: str = Form("{}"),
-    shorts_clip: str = Form("{}"),
-    crop_filter: str = Form(""),          # e.g. "crop=720:720:280:0" for custom_format
+    operation: str = Form(...),
+    params: str = Form("{}"),
+    edit_data: str = Form("{}"),
 ):
     if not ffmpeg_available():
-        raise HTTPException(status_code=503, detail="FFmpeg is not installed on this server")
-
+        raise HTTPException(status_code=503, detail="FFmpeg not available in this environment")
     try:
-        decisions = json.loads(edit_decisions)
-        cg = json.loads(color_grade)
-        sc = json.loads(shorts_clip)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+        params_dict = json.loads(params)
+        edit_dict = json.loads(edit_data)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON params")
 
     content = await file.read()
     ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
-    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
+    in_path = tempfile.mktemp(suffix=f".{ext}")
+    out_path = tempfile.mktemp(suffix=f"_out.{ext}")
 
-    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
-    tmp_in.write(content)
-    tmp_in.close()
-    in_path = tmp_in.name
-    out_path = in_path + "_out.mp4"
+    with open(in_path, "wb") as f:
+        f.write(content)
+
+    cmd = None
+    out_name = f"omni_{operation}.{ext}"
 
     try:
-        color_vf = build_color_filter(cg)
-
         if operation == "color_grade":
-            if color_vf:
-                cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", color_vf,
-                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                       "-c:a", "copy", out_path]
-            else:
-                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+            cg = edit_dict.get("color_grade", {})
+            vf = build_color_filter(cg)
+            if not vf:
+                vf = "eq=brightness=0:contrast=1:saturation=1"
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", vf, "-c:a", "aac", out_path]
 
-        elif operation == "shorts":
-            start_s = tc_to_sec(sc.get("best_start", "00:00:00.000"))
-            end_s = tc_to_sec(sc.get("best_end", "00:00:30.000"))
-            crop = sc.get("vertical_crop", "crop=ih*9/16:ih")
-            # Strip any 'crop=' prefix if AI included it
-            if "=" in crop and not crop.startswith("crop"):
-                crop = f"crop={crop.split('=',1)[1]}"
-            vf_chain = crop + (f",{color_vf}" if color_vf else "")
-            cmd = ["ffmpeg", "-y",
-                   "-ss", str(start_s), "-to", str(end_s),
-                   "-i", in_path,
-                   "-vf", vf_chain,
-                   "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                   "-c:a", "aac", "-b:a", "192k", out_path]
-
-        else:  # full_edit
+        elif operation == "apply_cuts":
+            decisions = edit_dict.get("edit_decisions", [])
             fc, maps = build_edit_filter(decisions)
-            if fc:
-                if color_vf:
-                    # Apply color grade on outv_raw → outv_colored
-                    fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
-                    cmd = ["ffmpeg", "-y", "-i", in_path,
-                           "-filter_complex", fc_full,
-                           "-map", "[outv_colored]", "-map", "[outa]",
-                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                           "-c:a", "aac", "-b:a", "192k", out_path]
-                else:
-                    # Use outv_raw directly as output
-                    cmd = ["ffmpeg", "-y", "-i", in_path,
-                           "-filter_complex", fc,
+            if fc and maps:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-filter_complex", fc,
+                       "-map", "[outv_raw]", "-map", "[outa]",
+                       "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
+        elif operation == "export_shorts":
+            sc = edit_dict.get("shorts_clip", {})
+            start = sc.get("best_start", "00:00:00.000")
+            end = sc.get("best_end", "00:00:30.000")
+            out_path = out_path.replace(f".{ext}", ".mp4")
+            out_name = "shorts.mp4"
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-ss", start, "-to", end,
+                   "-vf", "crop=ih*9/16:ih", "-c:v", "libx264", "-preset", "fast",
+                   "-c:a", "aac", out_path]
+
+        elif operation == "burn_srt":
+            srt_content = params_dict.get("srt", "")
+            srt_path = tempfile.mktemp(suffix=".srt")
+            with open(srt_path, "w", encoding="utf-8") as sf:
+                sf.write(srt_content)
+            cmd = ["ffmpeg", "-y", "-i", in_path,
+                   "-vf", f"subtitles={srt_path}:force_style='FontSize=20,PrimaryColour=&Hffffff'",
+                   "-c:a", "aac", out_path]
+
+        elif operation == "remove_silences":
+            silences = params_dict.get("silences", [])
+            if not silences:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+            else:
+                keeps = []
+                prev_end = 0.0
+                duration_total = params_dict.get("duration", 3600.0)
+                for s in sorted(silences, key=lambda x: x.get("start", 0)):
+                    s_start = float(s.get("start", 0))
+                    s_end = float(s.get("end", 0))
+                    if s_start > prev_end + 0.05:
+                        keeps.append({"action": "KEEP", "in_point": sec_to_tc(prev_end), "out_point": sec_to_tc(s_start)})
+                    prev_end = s_end
+                if prev_end < duration_total - 0.05:
+                    keeps.append({"action": "KEEP", "in_point": sec_to_tc(prev_end), "out_point": sec_to_tc(duration_total)})
+                fc, maps = build_edit_filter(keeps)
+                if fc and maps:
+                    cmd = ["ffmpeg", "-y", "-i", in_path, "-filter_complex", fc,
                            "-map", "[outv_raw]", "-map", "[outa]",
-                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                           "-c:a", "aac", "-b:a", "192k", out_path]
-            elif color_vf:
-                cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", color_vf,
-                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                       "-c:a", "copy", out_path]
-            else:
-                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
-
-        elif operation == "custom_format":
-            vf_chain = crop_filter + (f",{color_vf}" if color_vf else "") if crop_filter else color_vf
-            if vf_chain:
-                cmd = ["ffmpeg", "-y", "-i", in_path,
-                       "-vf", vf_chain,
-                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                       "-c:a", "copy", out_path]
-            else:
-                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
-
-        result = subprocess.run(cmd, capture_output=True, timeout=600)
-
-        if result.returncode != 0:
-            err = result.stderr.decode("utf-8", errors="replace")[-1500:]
-            # Fallback: if filter_complex failed, try color-grade-only or straight copy
-            if operation == "full_edit" and fc:
-                fallback_vf = color_vf if color_vf else None
-                if fallback_vf:
-                    fallback_cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", fallback_vf,
-                                    "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                                    "-c:a", "copy", out_path]
+                           "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", out_path]
                 else:
-                    fallback_cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
-                result2 = subprocess.run(fallback_cmd, capture_output=True, timeout=600)
-                if result2.returncode != 0:
-                    raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
-            else:
-                raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+                    cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
 
-        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-            raise HTTPException(status_code=500, detail="FFmpeg produced no output")
+        elif operation == "aspect_ratio":
+            ratio = params_dict.get("ratio", "16:9")
+            ratio_map = {"16:9": "iw:iw*9/16", "9:16": "ih*9/16:ih", "1:1": "min(iw\\,ih):min(iw\\,ih)", "4:3": "iw:iw*3/4"}
+            crop = ratio_map.get(ratio, "iw:iw*9/16")
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-vf", f"crop={crop}", "-c:a", "aac", out_path]
+
+        elif operation == "highlight_reel":
+            clips = params_dict.get("clips", [])
+            if not clips:
+                raise HTTPException(status_code=422, detail="No highlight clips provided")
+            fc, maps = build_edit_filter(clips)
+            if fc and maps:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-filter_complex", fc,
+                       "-map", "[outv_raw]", "-map", "[outa]",
+                       "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", out_path]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
+        else:
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+
+        if cmd:
+            result = subprocess.run(cmd, capture_output=True, timeout=300)
+            if result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr.decode()[-500:]}")
 
         with open(out_path, "rb") as f:
-            video_data = f.read()
-
-        suffix_map = {
-            "full_edit": "edited", "shorts": "shorts_9x16", "color_grade": "color_graded",
-            "custom_format": "converted",
-        }
-        out_name = f"{original_name}_{suffix_map.get(operation,'processed')}.mp4"
+            output_bytes = f.read()
 
         return Response(
-            content=video_data,
+            content=output_bytes,
             media_type="video/mp4",
             headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
         )
@@ -954,10 +943,7 @@ async def process_video_op(
 
 
 @app.post("/api/extract-thumbnail")
-async def extract_thumbnail(
-    file: UploadFile = File(...),
-    timestamp: float = Form(0.0),
-):
+async def extract_thumbnail(file: UploadFile = File(...), timestamp: float = Form(0.0)):
     if not HAS_CV2:
         raise HTTPException(status_code=503, detail="Thumbnail extraction unavailable in this environment")
     content = await file.read()
@@ -968,27 +954,20 @@ async def extract_thumbnail(
     try:
         cap = cv2.VideoCapture(tmp.name)
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        target_frame = int(timestamp * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(timestamp * fps))
         ret, frame = cap.read()
         cap.release()
         if not ret:
             raise HTTPException(status_code=404, detail="Frame not found at timestamp")
         h, w = frame.shape[:2]
-        # Full-res thumbnail (max 1920px)
         if w > 1920:
             scale = 1920 / w
             frame = cv2.resize(frame, (1920, int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, format="JPEG", quality=95)
-        jpeg_bytes = buf.getvalue()
-        base_name = (file.filename or "frame").rsplit(".", 1)[0]
-        return Response(
-            content=jpeg_bytes,
-            media_type="image/jpeg",
-            headers={"Content-Disposition": f'attachment; filename="{base_name}_thumbnail.jpg"'},
-        )
+        Image.fromarray(rgb).save(buf, format="JPEG", quality=92)
+        return Response(content=buf.getvalue(), media_type="image/jpeg",
+                        headers={"Content-Disposition": "attachment; filename=\"thumbnail.jpg\""})
     finally:
         try:
             os.unlink(tmp.name)
@@ -999,1352 +978,960 @@ async def extract_thumbnail(
 @app.post("/api/translate-captions")
 async def translate_captions(
     captions: str = Form(...),
-    target_language: str = Form("Spanish"),
+    target_language: str = Form("Hebrew"),
+    model: str = Form(FLASH),
 ):
     try:
         caps = json.loads(captions)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=422, detail="Invalid JSON")
+        raise HTTPException(status_code=422, detail="Invalid captions JSON")
 
-    cap_lines = "\n".join(
-        f'{c.get("id","?")}. [{c.get("start","")} --> {c.get("end","")}] {c.get("text","")}'
-        for c in caps
-    )
+    model_name = resolve_model(model)
     prompt = (
-        f"Translate these video captions to {target_language}.\n"
+        f"Translate these captions to {target_language}. "
         "Return ONLY a JSON array with the exact same structure but with the 'text' field translated. "
-        "Keep timecodes and IDs unchanged. Return ONLY valid JSON array, no markdown.\n\n"
-        f"{cap_lines}"
+        "Preserve all other fields exactly. No markdown, no explanation.\n\n"
+        f"{json.dumps(caps)}"
     )
 
     async def _stream():
         full = ""
+        async for line in gemini_stream(model_name, prompt, max_tokens=4000):
+            if line.startswith("data: "):
+                try:
+                    ev = json.loads(line[6:])
+                    if ev.get("type") == "text":
+                        full += ev.get("text", "")
+                except Exception:
+                    pass
+            yield line
         try:
-            with client.messages.stream(
-                model="claude-opus-4-8",
-                max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type': 'result', 'data': parsed})}\n\n"
-                        except Exception as e:
-                            yield f"data: {json.dumps({'type': 'error', 'message': f'Parse error: {e}'})}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
+            parsed = json.loads(clean)
+            yield f"data: {json.dumps({'type':'result','captions':parsed})}\n\n"
+        except Exception:
+            pass
 
-    return StreamingResponse(
-        _stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/video-search")
 async def video_search(
-    query: str = Form(...),
     frame_ids: str = Form(...),
     timestamps: str = Form(...),
+    query: str = Form(...),
+    model: str = Form(FLASH),
 ):
     try:
         ids = json.loads(frame_ids)
         ts = json.loads(timestamps)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid JSON")
+
+    model_name = resolve_model(model)
     if not ids:
         raise HTTPException(status_code=422, detail="No frames")
 
-    content = [
-        {"type": "text", "text": (
-            f"Search through these {len(ids)} video frames (indexed 0 to {len(ids)-1}) and find the frame that best matches: \"{query}\"\n\n"
-            "Respond with ONLY this JSON (no markdown):\n"
-            "{\"frame_index\": N, \"timestamp\": T, \"confidence\": 0.0-1.0, \"reason\": \"one sentence explanation\"}"
-        )}
-    ]
-    for i, fid in enumerate(ids):
-        content.append({"type": "image", "source": {"type": "file", "file_id": fid}})
-        content.append({"type": "text", "text": f"[Frame {i} @ {ts[i]:.1f}s]"})
-
     try:
-        msg = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=256,
-            thinking={"type": "adaptive"},
-            messages=[{"role": "user", "content": content}],
-            betas=["files-api-2025-04-14"],
-        )
-        text = next((b.text for b in msg.content if hasattr(b, "text")), "")
-        clean = re.sub(r"```(?:json)?\s*", "", text).strip()
-        result = json.loads(clean)
-        return result
+        video_file = await gemini_get_file(ids[0])
+        video_file = await wait_for_active(video_file)
     except Exception as e:
-        return {"frame_index": 0, "timestamp": ts[0] if ts else 0.0, "confidence": 0.0, "reason": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
+
+    prompt = (
+        f"Watch this video and search for: '{query}'\n\n"
+        "Return ONLY a JSON array of matching timestamps:\n"
+        '[{"timestamp": "00:00:05.2", "description": "What is happening that matches the query"}]'
+    )
+
+    async def _stream():
+        async for line in gemini_stream_json(model_name, [video_file, prompt], max_tokens=2000):
+            yield line
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/burn-subtitles")
-async def burn_subtitles(
-    file: UploadFile = File(...),
-    captions: str = Form(...),
-    style: str = Form("default"),
-):
+async def burn_subtitles(file: UploadFile = File(...), srt_content: str = Form(...)):
     if not ffmpeg_available():
         raise HTTPException(status_code=503, detail="FFmpeg not available")
-    try:
-        caps = json.loads(captions)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=422, detail="Invalid captions JSON")
-
     content = await file.read()
     ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
-    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
-
-    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
-    tmp_in.write(content)
-    tmp_in.close()
-
-    srt_lines: list[str] = []
-    for i, c in enumerate(caps, 1):
-        srt_lines += [str(i), f"{c.get('start','00:00:00,000')} --> {c.get('end','00:00:02,000')}", c.get("text", ""), ""]
-    tmp_srt = tempfile.NamedTemporaryFile(suffix=".srt", delete=False, mode="w", encoding="utf-8")
-    tmp_srt.write("\n".join(srt_lines))
-    tmp_srt.close()
-
-    out_path = tmp_in.name + "_subtitled.mp4"
-
-    force_styles = {
-        "default": "FontName=Arial,FontSize=22,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=2,Shadow=1",
-        "tiktok":  "FontName=Arial Black,FontSize=30,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=3,Outline=3,BackColour=&H80000000,Bold=1",
-        "minimal": "FontName=Arial,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=0",
-    }
-    fs = force_styles.get(style, force_styles["default"])
-
+    in_path = tempfile.mktemp(suffix=f".{ext}")
+    out_path = tempfile.mktemp(suffix="_subtitled.mp4")
+    srt_path = tempfile.mktemp(suffix=".srt")
+    with open(in_path, "wb") as f:
+        f.write(content)
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write(srt_content)
     try:
-        cmd = [
-            "ffmpeg", "-y", "-i", tmp_in.name,
-            "-vf", f"subtitles={tmp_srt.name}:force_style='{fs}'",
-            "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-            "-c:a", "copy", out_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=600)
-        if result.returncode != 0:
-            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
-            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
-        with open(out_path, "rb") as f:
-            video_data = f.read()
-        return Response(
-            content=video_data,
-            media_type="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{original_name}_subtitled.mp4"'},
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", in_path,
+             "-vf", f"subtitles={srt_path}:force_style='FontSize=20,PrimaryColour=&Hffffff'",
+             "-c:a", "aac", out_path],
+            capture_output=True, timeout=300,
         )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr.decode()[-300:]}")
+        with open(out_path, "rb") as f:
+            return Response(content=f.read(), media_type="video/mp4",
+                            headers={"Content-Disposition": "attachment; filename=\"subtitled.mp4\""})
     finally:
-        for p in [tmp_in.name, tmp_srt.name, out_path]:
-            try: os.unlink(p)
-            except Exception: pass
+        for p in [in_path, out_path, srt_path]:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
 
 
 @app.post("/api/remove-silences")
-async def remove_silences(
+async def remove_silences_endpoint(
     file: UploadFile = File(...),
-    silences: str = Form("[]"),
-    color_grade: str = Form("{}"),
+    silences: str = Form(...),
+    duration: float = Form(0),
 ):
     if not ffmpeg_available():
         raise HTTPException(status_code=503, detail="FFmpeg not available")
     try:
         silence_list = json.loads(silences)
-        cg = json.loads(color_grade)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
-
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid silences JSON")
     content = await file.read()
     ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
-    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
-
-    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
-    tmp_in.write(content)
-    tmp_in.close()
-    out_path = tmp_in.name + "_no_silence.mp4"
-
+    in_path = tempfile.mktemp(suffix=f".{ext}")
+    out_path = tempfile.mktemp(suffix=f"_no_silence.{ext}")
+    with open(in_path, "wb") as f:
+        f.write(content)
     try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", tmp_in.name],
-            capture_output=True, text=True, timeout=15,
-        )
-        duration = float(probe.stdout.strip()) if probe.returncode == 0 and probe.stdout.strip() else 0.0
-        if duration <= 0:
-            raise HTTPException(status_code=422, detail="Could not determine video duration")
-
-        sils = sorted(silence_list, key=lambda x: float(x["start"]))
-        keep_segs: list[dict] = []
-        cursor = 0.0
-        for sil in sils:
-            s, e = float(sil["start"]), float(sil["end"])
-            if s > cursor + 0.05:
-                keep_segs.append({"action": "KEEP", "in_point": sec_to_tc(cursor), "out_point": sec_to_tc(s)})
-            cursor = e
-        if cursor < duration - 0.1:
-            keep_segs.append({"action": "KEEP", "in_point": sec_to_tc(cursor), "out_point": sec_to_tc(duration)})
-
-        color_vf = build_color_filter(cg)
-        fc, _ = build_edit_filter(keep_segs) if keep_segs else ("", "")
-
-        if fc:
-            if color_vf:
-                fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
-                cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
-                       "-filter_complex", fc_full,
-                       "-map", "[outv_colored]", "-map", "[outa]",
-                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                       "-c:a", "aac", "-b:a", "192k", out_path]
-            else:
-                cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
-                       "-filter_complex", fc,
-                       "-map", "[outv_raw]", "-map", "[outa]",
-                       "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                       "-c:a", "aac", "-b:a", "192k", out_path]
-        elif color_vf:
-            cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-vf", color_vf,
-                   "-c:v", "libx264", "-crf", "20", "-preset", "fast", "-c:a", "copy", out_path]
+        keeps = []
+        prev_end = 0.0
+        for s in sorted(silence_list, key=lambda x: x.get("start", 0)):
+            s_start = float(s.get("start", 0))
+            s_end = float(s.get("end", 0))
+            if s_start > prev_end + 0.05:
+                keeps.append({"action": "KEEP", "in_point": sec_to_tc(prev_end), "out_point": sec_to_tc(s_start)})
+            prev_end = s_end
+        if prev_end < duration - 0.05:
+            keeps.append({"action": "KEEP", "in_point": sec_to_tc(prev_end), "out_point": sec_to_tc(duration)})
+        fc, maps = build_edit_filter(keeps)
+        if fc and maps:
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-filter_complex", fc,
+                   "-map", "[outv_raw]", "-map", "[outa]",
+                   "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", out_path]
         else:
-            cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-c", "copy", out_path]
-
-        result = subprocess.run(cmd, capture_output=True, timeout=600)
+            cmd = ["ffmpeg", "-y", "-i", in_path, "-c", "copy", out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=300)
         if result.returncode != 0:
-            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
-            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
+            raise HTTPException(status_code=500, detail=f"FFmpeg: {result.stderr.decode()[-300:]}")
         with open(out_path, "rb") as f:
-            video_data = f.read()
-        return Response(
-            content=video_data, media_type="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{original_name}_no_silence.mp4"'},
-        )
+            return Response(content=f.read(), media_type="video/mp4",
+                            headers={"Content-Disposition": "attachment; filename=\"no_silence.mp4\""})
     finally:
-        for p in [tmp_in.name, out_path]:
-            try: os.unlink(p)
-            except Exception: pass
+        for p in [in_path, out_path]:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
 
 
 @app.post("/api/highlight-reel")
 async def highlight_reel(
-    file: UploadFile = File(...),
-    edit_decisions: str = Form("[]"),
-    color_grade: str = Form("{}"),
-    max_duration: float = Form(60.0),
+    frame_ids: str = Form(...),
+    timestamps: str = Form(...),
+    model: str = Form(FLASH),
+    duration: float = Form(0),
+    target_duration: float = Form(60),
 ):
-    if not ffmpeg_available():
-        raise HTTPException(status_code=503, detail="FFmpeg not available")
     try:
-        decisions = json.loads(edit_decisions)
-        cg = json.loads(color_grade)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
+        ids = json.loads(frame_ids)
+        ts = json.loads(timestamps)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON")
 
-    content = await file.read()
-    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
-    original_name = (file.filename or "video.mp4").rsplit(".", 1)[0]
-
-    tmp_in = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
-    tmp_in.write(content)
-    tmp_in.close()
-    out_path = tmp_in.name + "_highlights.mp4"
-
-    # Select only the KEEP segments, pick best ones up to max_duration
-    keeps = [d for d in decisions if d.get("action") in ("KEEP", "TRIM")]
-    # Sort by quality if available; otherwise take first N seconds
-    selected, total_dur = [], 0.0
-    for k in keeps:
-        in_s = tc_to_sec(k.get("in_point", "00:00:00.000"))
-        out_s = tc_to_sec(k.get("out_point", "00:00:05.000"))
-        seg_dur = out_s - in_s
-        if seg_dur < 0.5 or total_dur + seg_dur > max_duration:
-            continue
-        selected.append(k)
-        total_dur += seg_dur
+    model_name = resolve_model(model)
+    if not ids:
+        raise HTTPException(status_code=422, detail="No frames")
 
     try:
-        color_vf = build_color_filter(cg)
-        if selected:
-            fc, _ = build_edit_filter(selected)
-            if fc:
-                if color_vf:
-                    fc_full = fc + f";[outv_raw]{color_vf}[outv_colored]"
-                    cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
-                           "-filter_complex", fc_full,
-                           "-map", "[outv_colored]", "-map", "[outa]",
-                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                           "-c:a", "aac", "-b:a", "192k", out_path]
-                else:
-                    cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
-                           "-filter_complex", fc,
-                           "-map", "[outv_raw]", "-map", "[outa]",
-                           "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                           "-c:a", "aac", "-b:a", "192k", out_path]
-            else:
-                cmd = ["ffmpeg", "-y", "-i", tmp_in.name, "-c", "copy", out_path]
-        else:
-            # Fallback: first max_duration seconds
-            cmd = ["ffmpeg", "-y", "-i", tmp_in.name,
-                   "-t", str(max_duration), "-c", "copy", out_path]
+        video_file = await gemini_get_file(ids[0])
+        video_file = await wait_for_active(video_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        result = subprocess.run(cmd, capture_output=True, timeout=600)
-        if result.returncode != 0:
-            err = result.stderr.decode("utf-8", errors="replace")[-1200:]
-            raise HTTPException(status_code=500, detail=f"FFmpeg error: {err}")
-        with open(out_path, "rb") as f:
-            video_data = f.read()
-        return Response(
-            content=video_data,
-            media_type="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{original_name}_highlights.mp4"'},
-        )
-    finally:
-        for p in [tmp_in.name, out_path]:
-            try: os.unlink(p)
-            except Exception: pass
+    prompt = (
+        f"Watch this video (total {round(duration,1)}s) and select the best clips for a highlight reel "
+        f"of approximately {target_duration} seconds.\n\n"
+        "Return ONLY a JSON array of clip segments:\n"
+        '[{"action":"KEEP","in_point":"00:00:05.000","out_point":"00:00:15.000","reason":"Most engaging moment"}]'
+    )
+
+    async def _stream():
+        async for line in gemini_stream_json(model_name, [video_file, prompt], max_tokens=3000):
+            yield line
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/generate-voiceover")
 async def generate_voiceover(
-    edit_data: str = Form(...),
+    frame_ids: str = Form(...),
+    timestamps: str = Form(...),
+    model: str = Form(FLASH),
+    duration: float = Form(0),
     style: str = Form("documentary"),
 ):
     try:
-        data = json.loads(edit_data)
+        ids = json.loads(frame_ids)
+        ts = json.loads(timestamps)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid JSON")
 
-    summary = data.get("summary", "a video")
-    scenes = data.get("scenes", [])
-    dur = data.get("recommended_final_duration", 60)
-    genre = data.get("genre", "other")
-    scene_list = "\n".join(
-        f"Scene {s.get('id')}: {s.get('title')} ({s.get('in_point')} – {s.get('out_point')}) — {s.get('mood','')}"
-        for s in scenes[:12]
-    )
+    model_name = resolve_model(model)
+    if not ids:
+        raise HTTPException(status_code=422, detail="No frames")
+
+    try:
+        video_file = await gemini_get_file(ids[0])
+        video_file = await wait_for_active(video_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     prompt = (
-        f"You are a professional voiceover writer. Write a {style} narration script for this video.\n\n"
-        f"Video summary: {summary}\n"
-        f"Genre: {genre}\n"
-        f"Duration: ~{round(dur)}s\n"
-        f"Scenes:\n{scene_list}\n\n"
-        "Write a word-for-word voiceover script that:\n"
-        "- Has natural spoken language rhythm\n"
-        "- Includes [PAUSE] markers between sentences\n"
-        "- Matches the pacing (timing in parentheses per section)\n"
-        "- Fits the genre and mood\n\n"
-        "Format your response as:\n"
-        "## Voiceover Script\n\n"
-        "[INTRO] (0:00–0:05)\n\"Your opening narration here...\"\n\n"
-        "[SECTION NAME] (timecode)\n\"Narration text...\"\n\n"
-        "## Director Notes\n"
-        "Tone, pacing, and delivery advice."
+        f"Watch this {round(duration,1)}-second video and write a professional voiceover script "
+        f"in {style} style.\n\n"
+        "Return ONLY JSON:\n"
+        '{"script": [{"timecode": "00:00:00.0", "duration": 4.0, "text": "Voiceover line"}], '
+        '"full_script": "Complete narration text", "word_count": 150}'
     )
 
     async def _stream():
-        try:
-            with client.messages.stream(
-                model="claude-opus-4-8",
-                max_tokens=2500,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": prompt}],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        async for line in gemini_stream_json(model_name, [video_file, prompt], max_tokens=3000):
+            yield line
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "ffmpeg": ffmpeg_available()}
-
+# ── Image Studio ─────────────────────────────────────────────────────────────
 
 IMAGE_ANALYSIS_PROMPT = """You are a world-class visual intelligence system combining photography expertise, computer vision, and AI art direction.
-
-Analyze this image and return ONLY this JSON (no markdown fences, no prose):
+Analyze this image with extreme depth and detail. Return ONLY this JSON (no markdown fences):
 
 {
-  "description": "2-3 sentence rich visual description",
-  "objects": [{"name":"object name","position":"where in frame","dominant":true}],
-  "faces": {"count": 0, "emotions": [], "estimated_ages": [], "notes": ""},
-  "text_in_image": "any visible text or empty string",
+  "description": "Rich, detailed 3-5 sentence description of the entire image",
+  "main_subject": "The primary subject of the image",
+  "objects": ["List", "of", "every", "identifiable", "object"],
+  "people": {
+    "count": 0,
+    "descriptions": ["Person 1: age estimate, gender, clothing, expression, action"],
+    "emotions": ["dominant emotions visible"]
+  },
+  "text_in_image": "Any visible text, signs, labels, or captions — exact transcription",
   "colors": {
-    "dominant_hex": ["#hex1","#hex2","#hex3","#hex4","#hex5"],
-    "palette_mood": "warm|cool|neutral|vibrant|muted|earthy|pastel",
-    "color_story": "One sentence on how colors create the mood"
+    "dominant": ["#hex1 — color name", "#hex2 — color name", "#hex3 — color name"],
+    "palette_mood": "warm|cool|neutral|vibrant|muted|monochromatic",
+    "background": "Description of background colors and texture"
   },
   "composition": {
-    "type": "rule_of_thirds|centered|diagonal|symmetrical|frame_within_frame|other",
-    "horizon_placement": "upper|middle|lower|none",
-    "depth": "shallow|medium|deep",
-    "leading_lines": false,
-    "negative_space": "abundant|moderate|minimal",
-    "notes": "Specific composition analysis"
-  },
-  "lighting": {
-    "type": "natural|studio|artificial|mixed",
-    "direction": "front|side|back|top|none",
-    "quality": "soft|harsh|diffused|dramatic|flat",
-    "time_of_day": "golden_hour|blue_hour|midday|overcast|indoor|unknown",
-    "notes": "Specific lighting notes"
+    "rule_of_thirds": "How the image uses rule of thirds",
+    "leading_lines": "Any leading lines or geometric patterns",
+    "depth": "shallow_dof|deep_focus|bokeh",
+    "framing": "How subjects are framed",
+    "symmetry": "Any symmetry or balance"
   },
   "technical": {
-    "shot_type": "macro|close_up|medium|wide|ultra_wide|aerial|other",
-    "estimated_lens": "fisheye|wide_angle|standard|portrait|telephoto",
-    "bokeh_visible": false,
-    "camera_angle": "eye_level|low_angle|high_angle|overhead|dutch_tilt",
-    "motion_blur": false,
-    "noise_level": "low|medium|high",
-    "estimated_settings": "f/2.8 ISO 800 1/500s (estimated)"
+    "estimated_camera": "Type of camera/lens likely used",
+    "focal_length": "Estimated focal length (e.g. 50mm)",
+    "aperture_est": "f/1.8",
+    "iso_est": "ISO 400",
+    "shutter_speed_est": "1/500s",
+    "lighting": "natural|artificial|mixed — direction and quality",
+    "time_of_day": "golden_hour|midday|overcast|night|indoor",
+    "quality_score": 8
   },
-  "quality": {
-    "sharpness": 8,
-    "exposure": "underexposed|slightly_under|good|slightly_over|overexposed",
-    "overall_score": 8,
-    "dynamic_range": "compressed|good|wide",
-    "verdict": "Professional quality portrait with excellent subject separation"
+  "scene_context": {
+    "setting": "Where this was taken",
+    "occasion": "What event or situation this depicts",
+    "mood": "Overall emotional atmosphere",
+    "story": "The implied narrative or story of the image"
   },
-  "mood": "The dominant emotional atmosphere",
-  "style": "e.g. Cinematic portrait photography, Documentary street, Commercial product shot",
-  "genre": "portrait|landscape|street|architecture|product|food|wildlife|macro|abstract|other",
-  "tags": ["tag1","tag2","tag3","tag4","tag5","tag6"],
-  "strengths": ["Specific strength 1", "Specific strength 2", "Specific strength 3"],
-  "improvements": ["Specific actionable improvement 1", "Improvement 2"],
-  "edit_suggestions": [
-    {"tool": "Exposure", "adjustment": "+0.3EV", "reason": "Slightly underexposed"},
-    {"tool": "Clarity", "adjustment": "+15", "reason": "Add definition to textures"}
-  ],
-  "ai_generation_prompt": "Highly detailed MidJourney/DALL-E/Firefly prompt to recreate or extend this image with AI generation",
-  "questions_to_explore": ["What story does this image tell?", "How could the composition be improved?"]
+  "tags": ["descriptive", "searchable", "tags", "list", "12-15", "tags"],
+  "ai_regeneration_prompt": "Complete, detailed prompt to recreate this image with DALL-E/Midjourney/Stable Diffusion",
+  "strengths": ["What this image does well photographically"],
+  "improvements": ["Specific suggestions to improve the composition/exposure/etc"]
 }"""
 
 
 @app.post("/api/analyze-image")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(file: UploadFile = File(...), model: str = Form(FLASH)):
     content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image too large (max 20MB)")
     media_type = file.content_type or "image/jpeg"
-    if not media_type.startswith("image/"):
-        raise HTTPException(status_code=415, detail="Not an image")
+    model_name = resolve_model(model)
 
-    try:
-        uploaded = client.beta.files.upload(
-            file=(file.filename or "image.jpg", content, media_type)
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-    file_id = uploaded.id
+    file_ref = await gemini_upload(content, media_type, file.filename or "image")
 
     async def _stream():
-        full = ""
         try:
-            with client.messages.stream(
-                model="claude-opus-4-8",
-                max_tokens=3500,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "file", "file_id": file_id}},
-                    {"type": "text", "text": IMAGE_ANALYSIS_PROMPT},
-                ]}],
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            file_obj = await gemini_get_file(file_ref.name)
+            async for line in gemini_stream_json(model_name, [file_obj, IMAGE_ANALYSIS_PROMPT], max_tokens=4000):
+                if '"type":"result"' in line or '"type": "result"' in line:
+                    try:
+                        ev = json.loads(line[6:])
+                        yield f"data: {json.dumps({'type':'result','data':ev['data'],'file_id':file_ref.name})}\n\n"
+                    except Exception:
+                        yield line
+                else:
+                    yield line
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            try: client.beta.files.delete(file_id)
-            except Exception: pass
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/image-chat")
 async def image_chat(
     file_id: str = Form(...),
     messages: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid messages JSON")
+    model_name = resolve_model(model)
 
-    # Inject image into first user message
-    first_user = next((m for m in msgs if m["role"] == "user"), None)
-    if first_user and file_id:
-        content = first_user.get("content", "")
-        if isinstance(content, str):
-            first_user["content"] = [
-                {"type": "image", "source": {"type": "file", "file_id": file_id}},
-                {"type": "text", "text": content},
-            ]
+    try:
+        image_file = await gemini_get_file(file_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Image file not found: {e}")
+
+    gemini_history = []
+    for msg in msgs[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
+
+    last_msg = msgs[-1].get("content", "") if msgs else ""
+    if not gemini_history:
+        last_content = [image_file, "Analyze this image.", last_msg]
+    else:
+        last_content = [last_msg]
+
+    m = genai.GenerativeModel(model_name, system_instruction="You are an expert image analyst. Answer questions about the provided image accurately and in detail.")
+    chat = m.start_chat(history=gemini_history)
 
     async def _stream():
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=2000,
-                thinking={"type": "adaptive"},
-                system="You are an expert visual analyst and photographer. Answer questions about the provided image with professional insight.",
-                messages=msgs,
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            resp = await chat.send_message_async(last_content, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# AUDIO INTELLIGENCE STUDIO
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Image Compare ────────────────────────────────────────────────────────────
 
-AUDIO_ANALYSIS_PROMPT = """You are a world-class audio intelligence system combining speech analysis, music theory, and audio engineering expertise.
-
-Listen carefully to this audio and return ONLY this JSON (no markdown, no prose):
-
-{
-  "type": "speech|music|podcast|interview|ambient|mixed",
-  "duration_estimate": "e.g. 2 minutes 30 seconds",
-  "language": "detected language or 'unknown'",
-  "transcript": "Full verbatim transcript. For music, transcribe lyrics. For ambient, describe sounds.",
-  "speakers": [
-    {"id": "Speaker 1", "description": "Voice characteristics", "speaking_time_pct": 60}
-  ],
-  "summary": "2-3 sentence executive summary of content",
-  "key_topics": ["topic1", "topic2", "topic3"],
-  "sentiment": "positive|negative|neutral|mixed",
-  "emotional_arc": "e.g. starts anxious, builds to hopeful, ends resolved",
-  "notable_quotes": [
-    {"quote": "exact words", "speaker": "Speaker 1", "significance": "why important"}
-  ],
-  "chapters": [
-    {"title": "Chapter name", "start": "00:00", "end": "01:30", "summary": "what happens"}
-  ],
-  "music_analysis": {
-    "genre": "if music: genre detected",
-    "bpm_estimate": 120,
-    "key": "C major",
-    "mood": "energetic|melancholic|upbeat|dark|peaceful",
-    "instruments": ["piano", "drums", "bass"],
-    "production_style": "lo-fi|polished|live|electronic"
-  },
-  "audio_quality": {
-    "clarity": "excellent|good|fair|poor",
-    "background_noise": "none|low|moderate|high",
-    "recording_environment": "studio|indoor|outdoor|phone|video-call",
-    "issues": []
-  },
-  "action_items": ["Any tasks, commitments, or follow-ups mentioned"],
-  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-  "content_warnings": [],
-  "translation_note": "If non-English: note the language and any translation nuances"
-}"""
-
-
-AUDIO_ALLOWED = {
-    "audio/mpeg", "audio/mp4", "audio/mp3", "audio/wav", "audio/wave",
-    "audio/x-wav", "audio/ogg", "audio/flac", "audio/aac", "audio/webm",
-    "audio/m4a", "audio/x-m4a",
-}
-
-
-@app.post("/api/analyze-audio")
-async def analyze_audio(file: UploadFile = File(...), model: str = Form("claude-opus-4-8")):
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Audio too large (max 50MB)")
-    media_type = file.content_type or "audio/mpeg"
-    if not (media_type.startswith("audio/") or media_type == "video/webm"):
-        raise HTTPException(status_code=415, detail="Not a supported audio format")
-
-    try:
-        uploaded = client.beta.files.upload(
-            file=(file.filename or "audio.mp3", content, media_type)
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-    file_id = uploaded.id
+@app.post("/api/compare-images")
+async def compare_images(
+    files: List[UploadFile] = File(...),
+    prompt: str = Form("Compare these images in detail."),
+    model: str = Form(FLASH),
+):
+    model_name = resolve_model(model)
+    parts = [prompt]
+    file_refs = []
+    for i, f in enumerate(files[:4]):
+        content = await f.read()
+        mt = f.content_type or "image/jpeg"
+        fref = await gemini_upload(content, mt, f.filename or f"image_{i}")
+        fobj = await gemini_get_file(fref.name)
+        parts = [fobj] + parts
+        file_refs.append(fref.name)
 
     async def _stream():
         full = ""
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=4000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": [
-                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                    {"type": "text", "text": AUDIO_ANALYSIS_PROMPT},
-                ]}],
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            m = genai.GenerativeModel(model_name)
+            cfg = genai.GenerationConfig(max_output_tokens=4000)
+            resp = await m.generate_content_async(parts, generation_config=cfg, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        full += chunk.text
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            try: client.beta.files.delete(file_id)
-            except Exception: pass
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        yield f"data: {json.dumps({'type':'done','result':full})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Live Frame ────────────────────────────────────────────────────────────────
+
+@app.post("/api/live-frame")
+async def live_frame(
+    image: str = Form(...),
+    model: str = Form(FLASH15),
+):
+    model_name = resolve_model(model)
+    try:
+        header, b64data = image.split(",", 1)
+        media_type = header.split(":")[1].split(";")[0]
+        img_bytes = base64.b64decode(b64data)
+        img = Image.open(io.BytesIO(img_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid image data: {e}")
+
+    prompt = "Describe what you see in this camera frame in 1-2 concise sentences. Focus on the main subject, action, and setting."
+
+    async def _stream():
+        full = ""
+        try:
+            m = genai.GenerativeModel(model_name)
+            cfg = genai.GenerationConfig(max_output_tokens=300)
+            resp = await m.generate_content_async([img, prompt], generation_config=cfg, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        full += chunk.text
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        yield f"data: {json.dumps({'type':'done','result':full})}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Audio Studio ─────────────────────────────────────────────────────────────
+
+AUDIO_ANALYSIS_PROMPT = """You are a world-class audio intelligence system combining speech analysis, music theory, and audio engineering expertise.
+Analyze this audio and return ONLY this JSON (no markdown fences):
+
+{
+  "type": "speech|music|ambient|mixed|podcast|interview",
+  "language": "Detected language",
+  "duration_estimate": "Approximate duration in seconds",
+  "transcript": "Full verbatim transcript — every word spoken",
+  "summary": "3-5 sentence summary of the audio content",
+  "speakers": [
+    {"id": "Speaker 1", "gender": "male|female|unknown", "accent": "accent description", "speaking_time_pct": 60, "tone": "confident|nervous|authoritative|conversational"}
+  ],
+  "chapters": [
+    {"title": "Chapter/Topic title", "start_estimate": "~00:00", "end_estimate": "~02:30", "summary": "What happens in this section"}
+  ],
+  "key_quotes": [
+    {"quote": "Exact quote", "speaker": "Speaker 1", "significance": "Why this is notable"}
+  ],
+  "topics": ["main topic", "secondary topic", "tertiary topic"],
+  "sentiment": {"overall": "positive|negative|neutral|mixed", "score": 7, "explanation": "Why"},
+  "audio_quality": {"score": 8, "background_noise": "none|low|medium|high", "clarity": "excellent|good|fair|poor", "issues": ["any audio issues"]},
+  "music_analysis": {"present": false, "genre": "", "tempo_bpm": 0, "key": "", "instruments": [], "mood": ""},
+  "action_items": ["Any tasks or next steps mentioned"],
+  "keywords": ["important", "keywords", "mentioned"]
+}"""
+
+
+@app.post("/api/analyze-audio")
+async def analyze_audio(file: UploadFile = File(...), model: str = Form(FLASH)):
+    content = await file.read()
+    media_type = file.content_type or "audio/mpeg"
+    model_name = resolve_model(model)
+
+    file_ref = await gemini_upload(content, media_type, file.filename or "audio")
+    file_obj = await wait_for_active(file_ref)
+
+    async def _stream():
+        try:
+            async for line in gemini_stream_json(model_name, [file_obj, AUDIO_ANALYSIS_PROMPT], max_tokens=5000):
+                if '"type":"result"' in line or '"type": "result"' in line:
+                    try:
+                        ev = json.loads(line[6:])
+                        yield f"data: {json.dumps({'type':'result','data':ev['data'],'file_id':file_ref.name})}\n\n"
+                    except Exception:
+                        yield line
+                else:
+                    yield line
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/audio-chat")
 async def audio_chat(
     file_id: str = Form(...),
     messages: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid messages JSON")
+    model_name = resolve_model(model)
 
-    first_user = next((m for m in msgs if m["role"] == "user"), None)
-    if first_user and file_id:
-        content = first_user.get("content", "")
-        if isinstance(content, str):
-            first_user["content"] = [
-                {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                {"type": "text", "text": content},
-            ]
+    try:
+        audio_file = await gemini_get_file(file_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    gemini_history = []
+    for msg in msgs[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
+
+    last_msg = msgs[-1].get("content", "") if msgs else ""
+    last_content = [audio_file, "Answer questions about this audio.", last_msg] if not gemini_history else [last_msg]
+
+    m = genai.GenerativeModel(model_name, system_instruction="You are an expert audio analyst. Answer questions about the provided audio accurately.")
+    chat = m.start_chat(history=gemini_history)
 
     async def _stream():
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=2500,
-                thinking={"type": "adaptive"},
-                system="You are an expert audio analyst, linguist, and music theorist. Answer questions about the provided audio with professional depth.",
-                messages=msgs,
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            resp = await chat.send_message_async(last_content, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DOCUMENT INTELLIGENCE
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Document IQ ───────────────────────────────────────────────────────────────
 
 DOCUMENT_ANALYSIS_PROMPT = """You are a world-class document intelligence system. Extract every meaningful piece of information from this document.
-
-Return ONLY this JSON (no markdown, no prose):
+Return ONLY this JSON (no markdown fences):
 
 {
-  "title": "Document title or inferred title",
-  "type": "report|article|contract|invoice|resume|research_paper|manual|email|letter|other",
-  "author": "Author name(s) or 'Unknown'",
-  "date": "Publication/creation date or 'Unknown'",
+  "title": "Document title or best guess",
+  "document_type": "contract|report|research_paper|article|manual|legal|invoice|letter|other",
+  "author": "Author(s) if identifiable",
+  "date": "Date if present",
   "language": "Primary language",
   "page_count_estimate": 1,
-  "summary": {
-    "one_line": "Single sentence summary",
-    "executive": "3-5 sentence executive summary",
-    "bullet_points": ["Key point 1", "Key point 2", "Key point 3", "Key point 4", "Key point 5"]
+  "executive_summary": "3-5 sentence executive summary capturing the most important points",
+  "key_sections": [
+    {"title": "Section name", "summary": "What this section covers", "key_points": ["point 1", "point 2"]}
+  ],
+  "entities": {
+    "people": ["Name — Role/context"],
+    "organizations": ["Org name — context"],
+    "locations": ["Location — context"],
+    "dates": ["Date — what happened"],
+    "monetary_values": ["Amount — context"],
+    "legal_references": ["Law/regulation — context"]
   },
-  "structure": {
-    "sections": [{"title": "Section name", "page": "1", "description": "What this section covers"}],
-    "has_table_of_contents": false,
-    "has_references": false,
-    "has_figures": false,
-    "has_tables": false
-  },
-  "key_entities": {
-    "people": ["Name and role"],
-    "organizations": ["Org name and context"],
-    "locations": ["Place and context"],
-    "dates": ["Date and event"],
-    "monetary_values": ["Amount and context"],
-    "products": [],
-    "legal_references": []
-  },
-  "extracted_data": {
-    "tables": [{"title": "Table name", "headers": [], "rows": [[]]}],
-    "lists": [{"title": "List name", "items": []}],
-    "formulas": [],
-    "definitions": [{"term": "term", "definition": "definition"}]
-  },
-  "citations": [{"text": "citation text", "source": "source name", "year": "year"}],
-  "action_items": ["Deadline or task identified in document"],
-  "risks_or_warnings": ["Any risks, warnings, or red flags"],
-  "sentiment": "positive|negative|neutral|formal|technical",
-  "readability": "elementary|intermediate|advanced|expert",
-  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5", "keyword6", "keyword7", "keyword8"],
-  "topics": ["Main topic 1", "Main topic 2", "Main topic 3"],
-  "questions_answered": ["What question does this document answer?"],
-  "gaps_or_missing_info": ["What important info seems missing?"],
-  "related_topics": ["What else should be researched?"]
+  "key_facts": ["Specific factual claim 1", "Specific factual claim 2"],
+  "data_tables": [
+    {"title": "Table name", "headers": ["col1", "col2"], "rows": [["val1", "val2"]], "insights": "What this data shows"}
+  ],
+  "action_items": ["Tasks or obligations mentioned"],
+  "deadlines": ["Date — what is due"],
+  "definitions": [{"term": "Technical term", "definition": "Plain-language explanation"}],
+  "risks_concerns": ["Any risks, warnings, or red flags"],
+  "conclusions": ["Main conclusions or recommendations"],
+  "sentiment": "positive|negative|neutral|mixed",
+  "readability_score": 7,
+  "keywords": ["important", "keywords"],
+  "tags": ["category", "tags"]
 }"""
 
 
 @app.post("/api/analyze-document")
-async def analyze_document(
-    file: UploadFile = File(...),
-    model: str = Form("claude-opus-4-8"),
-    focus: str = Form(""),
-):
+async def analyze_document(file: UploadFile = File(...), model: str = Form(FLASH)):
     content = await file.read()
-    if len(content) > 32 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Document too large (max 32MB)")
     media_type = file.content_type or "application/pdf"
+    model_name = resolve_model(model)
 
-    try:
-        uploaded = client.beta.files.upload(
-            file=(file.filename or "document.pdf", content, media_type)
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-    file_id = uploaded.id
-    prompt = DOCUMENT_ANALYSIS_PROMPT
-    if focus:
-        prompt += f"\n\nAdditional focus: {focus}"
+    file_ref = await gemini_upload(content, media_type, file.filename or "document")
+    file_obj = await wait_for_active(file_ref)
 
     async def _stream():
-        full = ""
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=6000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": [
-                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                    {"type": "text", "text": prompt},
-                ]}],
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type': 'chunk', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type': 'result', 'data': parsed, 'file_id': file_id})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type': 'parse_error', 'raw': full, 'error': str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            async for line in gemini_stream_json(model_name, [file_obj, DOCUMENT_ANALYSIS_PROMPT], max_tokens=6000):
+                if '"type":"result"' in line or '"type": "result"' in line:
+                    try:
+                        ev = json.loads(line[6:])
+                        yield f"data: {json.dumps({'type':'result','data':ev['data'],'file_id':file_ref.name})}\n\n"
+                    except Exception:
+                        yield line
+                else:
+                    yield line
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            try: client.beta.files.delete(file_id)
-            except Exception: pass
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/document-chat")
 async def document_chat(
     file_id: str = Form(...),
     messages: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid messages JSON")
+    model_name = resolve_model(model)
 
-    first_user = next((m for m in msgs if m["role"] == "user"), None)
-    if first_user and file_id:
-        content = first_user.get("content", "")
-        if isinstance(content, str):
-            first_user["content"] = [
-                {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                {"type": "text", "text": content},
-            ]
+    try:
+        doc_file = await gemini_get_file(file_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-    async def _stream():
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=4000,
-                thinking={"type": "adaptive"},
-                system="You are an expert document analyst. Answer questions about the provided document with precision, citing specific sections when relevant.",
-                messages=msgs,
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    gemini_history = []
+    for msg in msgs[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    last_msg = msgs[-1].get("content", "") if msgs else ""
+    last_content = [doc_file, "Answer questions about this document.", last_msg] if not gemini_history else [last_msg]
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# IMAGE COMPARE
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/api/compare-images")
-async def compare_images(
-    files: List[UploadFile] = File(...),
-    prompt: str = Form("Compare these images in detail"),
-    model: str = Form("claude-opus-4-8"),
-):
-    if len(files) < 2 or len(files) > 4:
-        raise HTTPException(status_code=400, detail="Send 2–4 images")
-
-    file_ids = []
-    for f in files:
-        content = await f.read()
-        mt = f.content_type or "image/jpeg"
-        up = client.beta.files.upload(file=(f.filename or "image.jpg", content, mt))
-        file_ids.append(up.id)
-
-    content_blocks = []
-    for i, fid in enumerate(file_ids):
-        content_blocks.append({"type": "text", "text": f"Image {i+1}:"})
-        content_blocks.append({"type": "image", "source": {"type": "file", "file_id": fid}})
-    content_blocks.append({"type": "text", "text": prompt + """
-
-Provide a structured comparison covering:
-1. **Visual Differences** — composition, lighting, color, subject
-2. **Technical Quality** — sharpness, exposure, noise, dynamic range
-3. **Mood & Style** — emotional impact, aesthetic, genre
-4. **Ranking** — rank images from best to least, with specific reasons
-5. **Best For** — which image works best for: social media, print, editorial, commercial
-6. **Verdict** — which is the strongest image and why
-
-Be specific and direct. Reference each image by its number."""})
+    m = genai.GenerativeModel(model_name, system_instruction="You are an expert document analyst. Answer questions about the provided document accurately and cite specific sections when relevant.")
+    chat = m.start_chat(history=gemini_history)
 
     async def _stream():
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=3000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": content_blocks}],
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text', 'text': ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            for fid in file_ids:
-                try: client.beta.files.delete(fid)
-                except Exception: pass
-
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# LIVE VISION — fast frame-by-frame webcam analysis
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/api/live-frame")
-async def live_frame(
-    file: UploadFile = File(...),
-    context: str = Form(""),
-    model: str = Form("claude-haiku-4-5-20251001"),
-):
-    content = await file.read()
-    if len(content) > 4 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Frame too large")
-    media_type = file.content_type or "image/jpeg"
-    prompt = (
-        "Describe what you see in this webcam frame in 1-2 concise sentences. "
-        "Focus on: main subject, action, notable objects, people, text visible. "
-        "Be direct and specific. No preamble."
-    )
-    if context:
-        prompt += f"\n\nUser focus: {context}"
-
-    async def _stream():
-        try:
-            img_data = base64.standard_b64encode(content).decode("utf-8")
-            with client.messages.stream(
-                model=model,
-                max_tokens=300,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-                    {"type": "text", "text": prompt},
-                ]}],
-            ) as s:
-                for ev in s:
-                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
-                yield f"data: {json.dumps({'type':'done'})}\n\n"
+            resp = await chat.send_message_async(last_content, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DATA ANALYSIS STUDIO
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Data Studio ───────────────────────────────────────────────────────────────
 
 DATA_ANALYSIS_PROMPT = """You are a world-class data scientist and analyst. Analyze this dataset and return ONLY this JSON (no markdown fences):
 
 {
-  "title": "Inferred dataset title",
-  "rows": 0,
-  "columns": 0,
-  "column_info": [
-    {"name": "col", "type": "numeric|categorical|datetime|text|boolean", "nulls": 0, "unique": 5, "sample_values": ["a","b"]}
-  ],
-  "summary": "2-3 sentence overview of what this dataset represents and its key characteristics",
+  "dataset_overview": {
+    "rows": 150,
+    "columns": 5,
+    "column_names": ["col1", "col2"],
+    "data_types": {"col1": "numeric", "col2": "categorical"},
+    "missing_values": {"col1": 0},
+    "file_size_description": "Small dataset"
+  },
+  "executive_summary": "3-5 sentence summary of what this data represents and key findings",
   "key_insights": [
-    "Specific data-driven insight with numbers",
-    "Another concrete finding",
-    "Third insight"
+    {"insight": "Specific finding", "significance": "Why it matters", "confidence": "high|medium|low"}
   ],
   "statistics": {
-    "numeric_columns": [
-      {"column": "col_name", "min": 0, "max": 100, "mean": 50, "median": 48, "std": 12, "zeros_pct": 0}
-    ],
-    "categorical_columns": [
-      {"column": "col_name", "top_values": [{"value": "A", "count": 100}, {"value": "B", "count": 80}], "unique_count": 5}
-    ]
+    "numeric_columns": {
+      "column_name": {
+        "mean": 45.2, "median": 42.0, "std": 12.3, "min": 10.0, "max": 100.0,
+        "q25": 35.0, "q75": 55.0, "outliers_count": 3
+      }
+    },
+    "categorical_columns": {
+      "column_name": {"unique_values": 5, "most_common": "value (30%)", "distribution": {"val1": 30, "val2": 20}}
+    }
   },
   "correlations": [
-    {"col_a": "col1", "col_b": "col2", "strength": "strong_positive|moderate_positive|weak|moderate_negative|strong_negative", "note": "explanation"}
+    {"columns": ["col1", "col2"], "strength": "strong|moderate|weak", "direction": "positive|negative", "insight": "What this means"}
   ],
-  "anomalies": ["Any outliers, data quality issues, or anomalies detected"],
-  "trends": ["Any time-based or sequential trends visible"],
-  "recommendations": [
-    {"action": "What to do", "reason": "Why", "priority": "high|medium|low"}
+  "trends": [
+    {"description": "Trend description", "columns_involved": ["col1"], "direction": "increasing|decreasing|cyclical"}
   ],
-  "chart_suggestions": [
-    {"type": "bar|line|scatter|pie|histogram", "x": "column_name", "y": "column_name", "title": "Chart title", "insight": "what this chart would reveal"}
+  "anomalies": [
+    {"description": "Anomaly description", "affected_rows": "~5%", "severity": "high|medium|low"}
   ],
-  "questions_to_explore": ["What other analysis would be valuable?"],
-  "data_quality_score": 8
+  "recommended_charts": [
+    {"type": "bar|line|scatter|histogram|pie|heatmap", "columns": ["x_col", "y_col"], "title": "Chart title", "insight": "What this shows"}
+  ],
+  "data_quality": {
+    "score": 8,
+    "issues": ["Missing values in col3", "Potential duplicates"],
+    "recommendations": ["Fill missing values with median", "Remove duplicates"]
+  },
+  "business_recommendations": [
+    {"recommendation": "Actionable recommendation", "priority": "high|medium|low", "expected_impact": "Impact description"}
+  ],
+  "next_analyses": ["Suggested follow-up analyses to perform"]
 }"""
 
 
 @app.post("/api/analyze-data")
-async def analyze_data(
-    file: UploadFile = File(...),
-    model: str = Form("claude-opus-4-8"),
-    question: str = Form(""),
-):
+async def analyze_data(file: UploadFile = File(...), model: str = Form(FLASH)):
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+    media_type = file.content_type or "text/csv"
+    filename = file.filename or "data.csv"
+    model_name = resolve_model(model)
 
-    text = content.decode("utf-8", errors="replace")
-    media_type = file.content_type or "text/plain"
-    prompt = DATA_ANALYSIS_PROMPT
-    if question:
-        prompt += f"\n\nSpecific question to answer: {question}"
+    # Send as text for small files, use Files API for larger ones
+    text_content = content.decode("utf-8", errors="replace")[:50000]
+    prompt = f"Dataset filename: {filename}\n\nContent:\n{text_content}\n\n{DATA_ANALYSIS_PROMPT}"
 
-    # Upload as document
-    try:
-        uploaded = client.beta.files.upload(
-            file=(file.filename or "data.csv", content, "text/plain")
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-    file_id = uploaded.id
+    file_ref = await gemini_upload(content, media_type, filename)
 
     async def _stream():
-        full = ""
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=5000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": [
-                    {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                    {"type": "text", "text": prompt},
-                ]}],
-                betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type':'result','data':parsed,'file_id':file_id})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+            async for line in gemini_stream_json(model_name, prompt, max_tokens=5000):
+                if '"type":"result"' in line or '"type": "result"' in line:
+                    try:
+                        ev = json.loads(line[6:])
+                        yield f"data: {json.dumps({'type':'result','data':ev['data'],'file_id':file_ref.name})}\n\n"
+                    except Exception:
+                        yield line
+                else:
+                    yield line
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
-        finally:
-            try: client.beta.files.delete(file_id)
-            except Exception: pass
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/data-chat")
 async def data_chat(
     file_id: str = Form(...),
     messages: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid messages JSON")
-    first_user = next((m for m in msgs if m["role"] == "user"), None)
-    if first_user and file_id:
-        content = first_user.get("content", "")
-        if isinstance(content, str):
-            first_user["content"] = [
-                {"type": "document", "source": {"type": "file", "file_id": file_id}},
-                {"type": "text", "text": content},
-            ]
+    model_name = resolve_model(model)
+
+    try:
+        data_file = await gemini_get_file(file_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    gemini_history = []
+    for msg in msgs[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
+
+    last_msg = msgs[-1].get("content", "") if msgs else ""
+    last_content = [data_file, "Answer questions about this dataset.", last_msg] if not gemini_history else [last_msg]
+
+    m = genai.GenerativeModel(model_name, system_instruction="You are an expert data analyst. Answer questions about the provided dataset with specific numbers and insights.")
+    chat = m.start_chat(history=gemini_history)
+
     async def _stream():
         try:
-            with client.messages.stream(
-                model=model, max_tokens=3000, thinking={"type": "adaptive"},
-                system="You are an expert data scientist. Answer questions about the provided dataset precisely, with statistics and specific values when available.",
-                messages=msgs, betas=["files-api-2025-04-14"],
-            ) as s:
-                for ev in s:
-                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
-                    elif type(ev).__name__ == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+            resp = await chat.send_message_async(last_content, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
     return StreamingResponse(_stream(), media_type="text/event-stream",
-        headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CODE INTELLIGENCE STUDIO
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Code IQ ───────────────────────────────────────────────────────────────────
 
 CODE_ANALYSIS_PROMPT = """You are a world-class software engineer and code reviewer. Analyze the provided code and return ONLY this JSON:
 
 {
-  "language": "Python|JavaScript|TypeScript|Go|Rust|Java|C++|other",
-  "framework": "detected framework or null",
-  "lines_of_code": 0,
-  "complexity": "simple|moderate|complex|very_complex",
-  "summary": "2-3 sentence description of what this code does",
-  "architecture_notes": "Key architectural patterns, design choices",
-  "bugs": [
-    {"severity": "critical|high|medium|low", "line": "line number or range", "description": "what the bug is", "fix": "exact fix code or suggestion"}
-  ],
-  "security_issues": [
-    {"severity": "critical|high|medium|low", "type": "SQL injection|XSS|...", "line": "line", "description": "issue", "fix": "fix"}
-  ],
-  "performance_issues": [
-    {"description": "issue", "line": "line", "suggestion": "optimization"}
-  ],
-  "code_smells": [
-    {"type": "long function|duplicate code|god class|...", "description": "detail", "line": "line"}
-  ],
-  "refactoring_suggestions": [
-    {"priority": "high|medium|low", "description": "what to refactor", "reason": "why", "example": "optional code snippet"}
-  ],
-  "test_coverage_assessment": "No tests|Partial|Good|Comprehensive",
-  "missing_tests": ["Test case that should exist"],
-  "documentation_quality": "none|poor|adequate|good|excellent",
-  "dependencies": ["detected imports/dependencies"],
-  "best_practices": {
-    "followed": ["Good practice observed"],
-    "violated": ["Practice that should be followed"]
+  "language": "Python|JavaScript|TypeScript|Java|Go|Rust|C++|other",
+  "frameworks": ["detected frameworks and libraries"],
+  "purpose": "What this code does in 1-2 sentences",
+  "architecture": "Description of the code architecture and patterns used",
+  "overall_grade": "A|B|C|D|F",
+  "overall_score": 8,
+  "metrics": {
+    "lines_of_code": 150,
+    "functions_count": 12,
+    "classes_count": 3,
+    "complexity": "low|medium|high|very_high",
+    "maintainability": 8,
+    "readability": 7,
+    "test_coverage_estimate": "none|low|medium|high"
   },
-  "overall_score": 7,
-  "grade": "A|B|C|D|F",
-  "summary_for_pr": "One-paragraph PR review summary"
+  "issues": [
+    {
+      "severity": "critical|high|medium|low|info",
+      "category": "security|performance|bug|style|maintainability",
+      "description": "Specific issue description",
+      "line_hint": "function/line reference",
+      "fix": "Specific fix recommendation"
+    }
+  ],
+  "security": {
+    "score": 7,
+    "vulnerabilities": ["SQL injection risk in getUserById", "XSS vulnerability in renderContent"],
+    "best_practices_missing": ["Input validation", "Rate limiting"]
+  },
+  "performance": {
+    "score": 6,
+    "bottlenecks": ["O(n²) nested loop in processItems", "Missing database indexes"],
+    "optimizations": ["Use caching for expensive computations", "Add pagination"]
+  },
+  "strengths": ["Well-structured class hierarchy", "Good error handling", "Clear naming conventions"],
+  "refactoring_suggestions": [
+    {"description": "Extract magic numbers to constants", "impact": "high|medium|low", "effort": "low"}
+  ],
+  "test_recommendations": ["Add unit tests for edge cases in parseInput", "Mock external API calls"],
+  "documentation_score": 6,
+  "dependencies_analysis": "Assessment of external dependencies used"
 }"""
 
 
 @app.post("/api/analyze-code")
 async def analyze_code(
-    files: List[UploadFile] = File(...),
-    model: str = Form("claude-opus-4-8"),
-    context: str = Form(""),
+    files: str = Form(...),
+    model: str = Form(FLASH),
 ):
-    content_blocks = []
-    for f in files:
-        content = await f.read()
-        text = content.decode("utf-8", errors="replace")
-        lang = f.filename.rsplit(".", 1)[-1] if "." in (f.filename or "") else "txt"
-        content_blocks.append({"type": "text", "text": f"### File: {f.filename}\n```{lang}\n{text}\n```\n"})
+    try:
+        code_files = json.loads(files)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid files JSON")
+    model_name = resolve_model(model)
 
-    prompt = CODE_ANALYSIS_PROMPT
-    if context:
-        prompt = f"Context: {context}\n\n" + prompt
-    content_blocks.append({"type": "text", "text": prompt})
+    combined = ""
+    for cf in code_files[:10]:
+        combined += f"\n\n=== FILE: {cf.get('name','unnamed')} ===\n{cf.get('content','')[:15000]}"
+
+    prompt = f"{CODE_ANALYSIS_PROMPT}\n\nCode to analyze:\n{combined}"
 
     async def _stream():
-        full = ""
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=5000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": content_blocks}],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type':'result','data':parsed})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type':'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        async for line in gemini_stream_json(model_name, prompt, max_tokens=5000):
+            yield line
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/code-chat")
 async def code_chat(
     code_context: str = Form(...),
     messages: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid messages JSON")
-    first_user = next((m for m in msgs if m["role"] == "user"), None)
-    if first_user and code_context:
-        content = first_user.get("content", "")
-        if isinstance(content, str):
-            first_user["content"] = f"Code context:\n{code_context[:8000]}\n\nQuestion: {content}"
+    model_name = resolve_model(model)
+
+    context_block = f"Code context:\n{code_context[:20000]}"
+    system = "You are an expert code reviewer and software engineer. Answer questions about the provided code accurately, with specific line references when possible."
+
+    gemini_history = []
+    for msg in msgs[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
+
+    last_msg = msgs[-1].get("content", "") if msgs else ""
+    first_parts = [context_block, last_msg] if not gemini_history else [last_msg]
+
+    m = genai.GenerativeModel(model_name, system_instruction=system)
+    chat = m.start_chat(history=gemini_history)
 
     async def _stream():
         try:
-            with client.messages.stream(
-                model=model, max_tokens=4000, thinking={"type": "adaptive"},
-                system="You are a senior software engineer. Answer questions about the provided code with precision. Include code examples when helpful.",
-                messages=msgs,
-            ) as s:
-                for ev in s:
-                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
-                    elif type(ev).__name__ == "RawMessageStopEvent":
-                        yield f"data: {json.dumps({'type':'done'})}\n\n"
+            resp = await chat.send_message_async(first_parts, stream=True)
+            async for chunk in resp:
+                try:
+                    if chunk.text:
+                        yield f"data: {json.dumps({'type':'text','text':chunk.text})}\n\n"
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+
     return StreamingResponse(_stream(), media_type="text/event-stream",
-        headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# AI WRITER STUDIO
-# ══════════════════════════════════════════════════════════════════════════════
+# ── AI Writer ─────────────────────────────────────────────────────────────────
 
-WRITER_TEMPLATES = {
-    "blog_post": "Write a comprehensive, engaging blog post",
+CONTENT_TEMPLATES = {
+    "blog_post": "Write a professional blog post",
     "email": "Write a professional email",
-    "tweet_thread": "Write a compelling Twitter/X thread (10-15 tweets, number each)",
-    "linkedin": "Write an engaging LinkedIn post with hooks and value",
-    "youtube_desc": "Write a YouTube video description with timestamps, hashtags, and CTAs",
-    "product_desc": "Write a persuasive product description for e-commerce",
-    "cover_letter": "Write a tailored cover letter",
-    "press_release": "Write a professional press release in AP style",
-    "cold_email": "Write a cold outreach email with a compelling hook and clear CTA",
-    "script": "Write a video/podcast script with clear sections",
-    "story": "Write a short story or creative fiction",
-    "ad_copy": "Write high-converting advertising copy (headline, subheadline, body, CTA)",
-}
-
-TONES = {
-    "professional": "formal, authoritative, trustworthy",
-    "casual": "friendly, conversational, approachable",
-    "persuasive": "compelling, urgent, action-driving",
-    "academic": "scholarly, precise, evidence-based",
-    "creative": "imaginative, vivid, distinctive voice",
-    "empathetic": "warm, understanding, supportive",
-    "humorous": "witty, light-hearted, entertaining",
+    "tweet_thread": "Write an engaging Twitter/X thread with numbered tweets",
+    "linkedin": "Write an engaging LinkedIn post",
+    "youtube_desc": "Write a YouTube video description with timestamps and hashtags",
+    "product_desc": "Write a compelling product description for e-commerce",
+    "cover_letter": "Write a compelling cover letter",
+    "press_release": "Write a professional press release",
+    "cold_email": "Write an effective cold outreach email",
+    "script": "Write a video/podcast script with stage directions",
+    "story": "Write a creative short story or fiction piece",
+    "ad_copy": "Write persuasive advertising copy",
 }
 
 
 @app.post("/api/generate-content")
 async def generate_content(
-    template: str = Form("blog_post"),
     topic: str = Form(...),
+    template: str = Form("blog_post"),
     tone: str = Form("professional"),
     length: str = Form("medium"),
     language: str = Form("English"),
     extra: str = Form(""),
-    model: str = Form("claude-opus-4-8"),
+    model: str = Form(FLASH),
 ):
-    tmpl_desc = WRITER_TEMPLATES.get(template, "Write content about")
-    tone_desc = TONES.get(tone, tone)
-    length_guide = {"short": "300-500 words", "medium": "600-900 words", "long": "1200-1800 words", "ultra": "2500+ words"}.get(length, "600-900 words")
+    model_name = resolve_model(model)
+    template_instruction = CONTENT_TEMPLATES.get(template, "Write professional content")
+    length_map = {"short": "300-500 words", "medium": "600-900 words", "long": "1200-1800 words", "ultra": "2500+ words"}
+    length_target = length_map.get(length, "600-900 words")
 
-    prompt = f"""{tmpl_desc} about the following topic.
-
-Topic / Brief: {topic}
-
-Requirements:
-- Tone: {tone_desc}
-- Length: {length_guide}
-- Language: {language}
-- Format: Use proper markdown (headings, bold, lists) where appropriate
-{('- Additional instructions: ' + extra) if extra else ''}
-
-Write the complete content now, ready to publish. No preamble, no "here is the content" — start directly."""
+    prompt = (
+        f"{template_instruction} about the following topic/brief:\n\n{topic}\n\n"
+        f"Requirements:\n"
+        f"- Tone: {tone}\n"
+        f"- Target length: {length_target}\n"
+        f"- Language: {language}\n"
+        f"- Format with proper headings, paragraphs, and structure\n"
+        f"- Make it engaging, specific, and high quality\n"
+    )
+    if extra.strip():
+        prompt += f"\nAdditional instructions: {extra.strip()}\n"
 
     async def _stream():
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=4000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": prompt}],
-            ) as s:
-                for ev in s:
-                    if type(ev).__name__ == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            yield f"data: {json.dumps({'type':'text','text':ev.delta.text})}\n\n"
-                yield f"data: {json.dumps({'type':'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        async for line in gemini_stream(model_name, prompt, max_tokens=4000):
+            yield line
+        yield f"data: {json.dumps({'type':'done'})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# WEB ANALYZER
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Web IQ ────────────────────────────────────────────────────────────────────
 
 WEB_ANALYSIS_PROMPT = """Analyze this web page content and return ONLY this JSON (no markdown fences):
 
@@ -2404,25 +1991,22 @@ def fetch_url_content(url: str, timeout: int = 10) -> tuple[str, str]:
     except Exception as e:
         raise ValueError(f"Could not fetch URL: {e}")
 
-    # Strip tags
-    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    # Extract title
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    title = html_module.unescape(title_match.group(1).strip()) if title_match else url
+
+    # Strip to text
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html_module.unescape(text)
-    text = re.sub(r"\s{2,}", " ", text).strip()
-
-    # Try to get title
-    title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    title = html_module.unescape(title_m.group(1).strip()) if title_m else "Unknown"
+    text = re.sub(r"\s+", " ", text).strip()
     return text[:12000], title
 
 
 @app.post("/api/analyze-url")
-async def analyze_url(
-    url: str = Form(...),
-    model: str = Form("claude-opus-4-8"),
-):
+async def analyze_url(url: str = Form(...), model: str = Form(FLASH)):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
@@ -2431,43 +2015,24 @@ async def analyze_url(
         raise HTTPException(status_code=422, detail=str(e))
 
     prompt = f"URL: {url}\nPage title: {title}\n\nPage content:\n{content}\n\n{WEB_ANALYSIS_PROMPT}"
+    model_name = resolve_model(model)
 
     async def _stream():
-        full = ""
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=4000,
-                thinking={"type": "adaptive"},
-                messages=[{"role": "user", "content": prompt}],
-            ) as s:
-                for ev in s:
-                    t = type(ev).__name__
-                    if t == "RawContentBlockDeltaEvent":
-                        dt = getattr(ev.delta, "type", None)
-                        if dt == "text_delta":
-                            full += ev.delta.text
-                            yield f"data: {json.dumps({'type':'chunk','text':ev.delta.text})}\n\n"
-                    elif t == "RawMessageStopEvent":
-                        try:
-                            clean = re.sub(r"```(?:json)?\s*", "", full).strip()
-                            parsed = json.loads(clean)
-                            yield f"data: {json.dumps({'type':'result','data':parsed,'url':url,'page_title':title})}\n\n"
-                        except Exception as e2:
-                            yield f"data: {json.dumps({'type':'parse_error','raw':full[:2000],'error':str(e2)})}\n\n"
-                        yield f"data: {json.dumps({'type':'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        async for line in gemini_stream_json(model_name, prompt, max_tokens=4000):
+            if '"type":"result"' in line or '"type": "result"' in line:
+                try:
+                    ev = json.loads(line[6:])
+                    yield f"data: {json.dumps({'type':'result','data':ev['data'],'url':url,'page_title':title})}\n\n"
+                except Exception:
+                    yield line
+            else:
+                yield line
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BATCH IMAGE PROCESSOR
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Batch Image Processor ─────────────────────────────────────────────────────
 
 BATCH_IMAGE_PROMPT = """Analyze this image and return ONLY this compact JSON:
 {
@@ -2488,25 +2053,21 @@ BATCH_IMAGE_PROMPT = """Analyze this image and return ONLY this compact JSON:
 @app.post("/api/batch-analyze-images")
 async def batch_analyze_images(
     files: List[UploadFile] = File(...),
-    model: str = Form("claude-sonnet-4-6"),
+    model: str = Form(FLASH15),
 ):
     if len(files) > 20:
         raise HTTPException(status_code=400, detail="Max 20 images per batch")
+    model_name = resolve_model(model)
 
     async def analyze_one(f: UploadFile, idx: int):
         content = await f.read()
         media_type = f.content_type or "image/jpeg"
-        img_data = base64.standard_b64encode(content).decode("utf-8")
         try:
-            resp = client.messages.create(
-                model=model,
-                max_tokens=600,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-                    {"type": "text", "text": BATCH_IMAGE_PROMPT},
-                ]}],
-            )
-            raw = resp.content[0].text
+            img = Image.open(io.BytesIO(content))
+            m = genai.GenerativeModel(model_name)
+            cfg = genai.GenerationConfig(max_output_tokens=600)
+            resp = await m.generate_content_async([img, BATCH_IMAGE_PROMPT], generation_config=cfg)
+            raw = resp.text
             clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
             parsed = json.loads(clean)
             parsed["filename"] = f.filename or f"image_{idx+1}"
@@ -2523,11 +2084,44 @@ async def batch_analyze_images(
             yield f"data: {json.dumps({'type':'item','result':r})}\n\n"
         yield f"data: {json.dumps({'type':'done','total':len(results)})}\n\n"
 
-    return StreamingResponse(
-        _stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+
+# ── Silence detect (silence in audio track) ──────────────────────────────────
+
+@app.post("/api/silence-detect")
+async def silence_detect(file: UploadFile = File(...)):
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg not available")
+    content = await file.read()
+    ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
+    in_path = tempfile.mktemp(suffix=f".{ext}")
+    with open(in_path, "wb") as f:
+        f.write(content)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", in_path, "-af",
+             "silencedetect=noise=-40dB:d=0.5", "-f", "null", "-"],
+            capture_output=True, timeout=120,
+        )
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        silence_starts = re.findall(r"silence_start: ([\d.]+)", stderr)
+        silence_ends = re.findall(r"silence_end: ([\d.]+)", stderr)
+        silences = []
+        for s, e in zip(silence_starts, silence_ends):
+            start, end = float(s), float(e)
+            if end - start >= 0.3:
+                silences.append({"start": round(start, 3), "end": round(end, 3), "duration": round(end - start, 3)})
+        return {"silences": silences, "count": len(silences)}
+    finally:
+        try:
+            os.unlink(in_path)
+        except Exception:
+            pass
+
+
+# ── Static files ──────────────────────────────────────────────────────────────
 
 if not os.getenv("VERCEL"):
     app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
