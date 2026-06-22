@@ -14,7 +14,11 @@ import subprocess
 from typing import AsyncGenerator, List
 
 import anthropic
-import cv2
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 from PIL import Image
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -637,6 +641,9 @@ async def extract_video_frames(
         tmp.write(content)
         tmp_path = tmp.name
 
+    if not HAS_CV2:
+        os.unlink(tmp_path)
+        raise HTTPException(status_code=503, detail="Video processing unavailable in this environment (opencv not installed)")
     try:
         max_frames = min(max(1, max_frames), 30)
         frames_data, meta = extract_frames_cv2(tmp_path, max_frames)
@@ -946,6 +953,8 @@ async def extract_thumbnail(
     file: UploadFile = File(...),
     timestamp: float = Form(0.0),
 ):
+    if not HAS_CV2:
+        raise HTTPException(status_code=503, detail="Thumbnail extraction unavailable in this environment")
     content = await file.read()
     ext = (file.filename or "video.mp4").rsplit(".", 1)[-1].lower()
     tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
@@ -2515,4 +2524,5 @@ async def batch_analyze_images(
     )
 
 
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
+if not os.getenv("VERCEL"):
+    app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")

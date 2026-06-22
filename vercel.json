@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": { "maxLambdaSize": "50mb" }
+    },
+    {
+      "src": "frontend/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "api/index.py" },
+    { "src": "/(.+\\.(?:css|js|png|jpg|jpeg|gif|svg|ico|woff2?))", "dest": "frontend/$1" },
+    { "src": "/(.*)", "dest": "frontend/index.html" }
+  ]
+}
