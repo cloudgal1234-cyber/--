@@ -42,6 +42,11 @@ app.add_middleware(
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "cv2": HAS_CV2}
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def extract_frames_cv2(video_path: str, max_frames: int = 20) -> tuple[list, dict]:
