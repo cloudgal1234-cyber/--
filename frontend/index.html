@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>OmniAI — Multimodal AI Studio</title>
+  <title>OmniAI — סטודיו AI רב-אמצעי</title>
   <link rel="stylesheet" href="style.css"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css"/>
@@ -26,7 +26,7 @@
         </svg>
         <span class="logo-text">OmniAI</span>
       </div>
-      <button id="new-chat-btn" class="icon-btn-sm" title="New conversation">
+      <button id="new-chat-btn" class="icon-btn-sm" title="שיחה חדשה">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
@@ -34,39 +34,39 @@
     <div class="mode-switcher">
       <button class="mode-btn active" data-mode="chat">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Chat
+        צ'אט
       </button>
       <button class="mode-btn" data-mode="video">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-        Video Studio
+        סטודיו וידאו
       </button>
       <button class="mode-btn" data-mode="image">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        Image Studio
+        סטודיו תמונה
       </button>
       <button class="mode-btn" data-mode="audio">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        Audio Studio
+        סטודיו אודיו
       </button>
       <button class="mode-btn" data-mode="document">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        Document IQ
+        מסמך IQ
       </button>
       <button class="mode-btn" data-mode="data">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        Data Studio
+        סטודיו נתונים
       </button>
       <button class="mode-btn" data-mode="code">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        Code IQ
+        קוד IQ
       </button>
       <button class="mode-btn" data-mode="live">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-        Live Vision
+        ראייה חיה
       </button>
       <button class="mode-btn" data-mode="writer">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-        AI Writer
+        כותב AI
       </button>
       <button class="mode-btn" data-mode="web">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -74,27 +74,27 @@
       </button>
       <button class="mode-btn" data-mode="batch">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Batch
+        עיבוד קבוצתי
       </button>
     </div>
 
     <div class="sb-section" id="chat-sidebar">
-      <div class="sb-label">Model</div>
+      <div class="sb-label">מודל</div>
       <select id="model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast)</option>
       </select>
 
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
-      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Web Search</span><input type="checkbox" id="t-search" checked/><span class="toggle-sw"></span></label>
-      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Code Execution</span><input type="checkbox" id="t-code" checked/><span class="toggle-sw"></span></label>
-      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>Deep Thinking</span><input type="checkbox" id="t-think" checked/><span class="toggle-sw"></span></label>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
+      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>חיפוש ברשת</span><input type="checkbox" id="t-search" checked/><span class="toggle-sw"></span></label>
+      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>הרצת קוד</span><input type="checkbox" id="t-code" checked/><span class="toggle-sw"></span></label>
+      <label class="toggle-row"><span class="toggle-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>חשיבה עמוקה</span><input type="checkbox" id="t-think" checked/><span class="toggle-sw"></span></label>
 
       <div class="sb-caps">
-        <div class="cap-badge">🖼 Images & Vision</div>
-        <div class="cap-badge">📄 PDFs & Documents</div>
-        <div class="cap-badge">🧠 1M Token Context</div>
+        <div class="cap-badge">🖼 תמונות וראייה</div>
+        <div class="cap-badge">📄 PDF ומסמכים</div>
+        <div class="cap-badge">🧠 הקשר 1M טוקנים</div>
       </div>
     </div>
 
@@ -106,30 +106,30 @@
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
 
-      <div class="sb-label" style="margin-top:12px">Frame Extraction</div>
+      <div class="sb-label" style="margin-top:12px">חילוץ פריימים</div>
       <div class="frame-slider-row">
         <input type="range" id="frame-count" min="8" max="30" value="20"/>
-        <span id="frame-count-label">20 frames</span>
+        <span id="frame-count-label">20 פריימים</span>
       </div>
 
-      <div class="sb-label" style="margin-top:12px">Scene Detection</div>
+      <div class="sb-label" style="margin-top:12px">זיהוי סצנות</div>
       <div class="frame-slider-row">
         <input type="range" id="scene-thresh" min="10" max="60" value="35" step="5"/>
-        <span id="scene-thresh-label">35% sensitivity</span>
+        <span id="scene-thresh-label">35% רגישות</span>
       </div>
 
-      <div class="sb-label" style="margin-top:12px">Studio Info</div>
+      <div class="sb-label" style="margin-top:12px">פרטי סטודיו</div>
       <div class="sb-caps">
-        <div class="cap-badge">✂️ AI Cut Decisions</div>
-        <div class="cap-badge">🎨 Color Grading</div>
+        <div class="cap-badge">✂️ החלטות עריכה AI</div>
+        <div class="cap-badge">🎨 עיצוב צבעים</div>
         <div class="cap-badge">📥 SRT / EDL / FFmpeg</div>
-        <div class="cap-badge">📱 Shorts Optimizer</div>
-        <div class="cap-badge">🎬 Storyboard</div>
+        <div class="cap-badge">📱 אופטימיזציה לשורטס</div>
+        <div class="cap-badge">🎬 סטוריבורד</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="img-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="img-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best Vision)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
@@ -139,83 +139,83 @@
       <div class="sb-label" style="margin-top:12px">Capture</div>
       <button class="upload-btn" id="img-webcam-btn" style="width:100%;justify-content:center;margin-bottom:6px">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12C2 6.5 6.5 2 12 2s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/><circle cx="12" cy="12" r="6" stroke-opacity=".3"/></svg>
-        Open Webcam
+        פתח מצלמה
       </button>
 
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">🔍 Deep Object Detection</div>
-        <div class="cap-badge">😊 Facial Analysis</div>
-        <div class="cap-badge">🎨 Color DNA Palette</div>
-        <div class="cap-badge">📐 Composition Score</div>
-        <div class="cap-badge">💡 Lighting Analysis</div>
-        <div class="cap-badge">⚙️ EXIF &amp; Technical</div>
-        <div class="cap-badge">✨ AI Regenerate Prompt</div>
-        <div class="cap-badge">💬 Chat with Image</div>
+        <div class="cap-badge">🔍 זיהוי אובייקטים מעמיק</div>
+        <div class="cap-badge">😊 ניתוח פנים</div>
+        <div class="cap-badge">🎨 פלטת DNA צבעים</div>
+        <div class="cap-badge">📐 ציון קומפוזיציה</div>
+        <div class="cap-badge">💡 ניתוח תאורה</div>
+        <div class="cap-badge">⚙️ EXIF וטכני</div>
+        <div class="cap-badge">✨ פרומפט AI לרגנרציה</div>
+        <div class="cap-badge">💬 צ'אט עם תמונה</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="audio-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="audio-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
 
-      <div class="sb-label" style="margin-top:12px">Record Live</div>
+      <div class="sb-label" style="margin-top:12px">הקלטה חיה</div>
       <button class="upload-btn" id="audio-record-btn" style="width:100%;justify-content:center">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>
-        Start Recording
+        התחל הקלטה
       </button>
 
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">📝 Full Transcription</div>
-        <div class="cap-badge">👥 Speaker Detection</div>
-        <div class="cap-badge">🎵 Music Analysis</div>
-        <div class="cap-badge">💡 Key Moments</div>
-        <div class="cap-badge">💬 Notable Quotes</div>
-        <div class="cap-badge">🌍 Language Detection</div>
-        <div class="cap-badge">📋 Chapter Markers</div>
-        <div class="cap-badge">🎭 Sentiment Arc</div>
+        <div class="cap-badge">📝 תמלול מלא</div>
+        <div class="cap-badge">👥 זיהוי דוברים</div>
+        <div class="cap-badge">🎵 ניתוח מוזיקה</div>
+        <div class="cap-badge">💡 רגעים מרכזיים</div>
+        <div class="cap-badge">💬 ציטוטים בולטים</div>
+        <div class="cap-badge">🌍 זיהוי שפה</div>
+        <div class="cap-badge">📋 סמני פרקים</div>
+        <div class="cap-badge">🎭 קשת סנטימנטים</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="writer-sidebar">
-      <div class="sb-label">Template</div>
+      <div class="sb-label">תבנית</div>
       <select id="writer-template" class="model-select">
-        <option value="blog_post">📝 Blog Post</option>
-        <option value="email">📧 Email</option>
-        <option value="tweet_thread">🐦 Tweet Thread</option>
-        <option value="linkedin">💼 LinkedIn Post</option>
-        <option value="youtube_desc">▶️ YouTube Description</option>
-        <option value="product_desc">🛍 Product Description</option>
-        <option value="cover_letter">📄 Cover Letter</option>
-        <option value="press_release">📰 Press Release</option>
-        <option value="cold_email">📩 Cold Email</option>
-        <option value="script">🎬 Script</option>
-        <option value="story">✍️ Story / Fiction</option>
-        <option value="ad_copy">📢 Ad Copy</option>
+        <option value="blog_post">📝 פוסט בלוג</option>
+        <option value="email">📧 אימייל</option>
+        <option value="tweet_thread">🐦 שרשור ציוצים</option>
+        <option value="linkedin">💼 פוסט לינקדאין</option>
+        <option value="youtube_desc">▶️ תיאור יוטיוב</option>
+        <option value="product_desc">🛍 תיאור מוצר</option>
+        <option value="cover_letter">📄 מכתב מקדים</option>
+        <option value="press_release">📰 הודעה לעיתונות</option>
+        <option value="cold_email">📩 אימייל קר</option>
+        <option value="script">🎬 תסריט</option>
+        <option value="story">✍️ סיפור / פיקציה</option>
+        <option value="ad_copy">📢 טקסט פרסומי</option>
       </select>
-      <div class="sb-label" style="margin-top:10px">Tone</div>
+      <div class="sb-label" style="margin-top:10px">טון</div>
       <select id="writer-tone" class="model-select">
-        <option value="professional">Professional</option>
-        <option value="casual">Casual &amp; Friendly</option>
-        <option value="persuasive">Persuasive</option>
-        <option value="academic">Academic</option>
-        <option value="creative">Creative</option>
-        <option value="empathetic">Empathetic</option>
-        <option value="humorous">Humorous</option>
+        <option value="professional">מקצועי</option>
+        <option value="casual">קז'ואל וידידותי</option>
+        <option value="persuasive">משכנע</option>
+        <option value="academic">אקדמי</option>
+        <option value="creative">יצירתי</option>
+        <option value="empathetic">אמפתי</option>
+        <option value="humorous">הומוריסטי</option>
       </select>
-      <div class="sb-label" style="margin-top:10px">Length</div>
+      <div class="sb-label" style="margin-top:10px">אורך</div>
       <select id="writer-length" class="model-select">
-        <option value="short">Short (300-500w)</option>
-        <option value="medium" selected>Medium (600-900w)</option>
-        <option value="long">Long (1200-1800w)</option>
-        <option value="ultra">Ultra (2500w+)</option>
+        <option value="short">קצר (300-500 מילים)</option>
+        <option value="medium" selected>בינוני (600-900 מילים)</option>
+        <option value="long">ארוך (1200-1800 מילים)</option>
+        <option value="ultra">ארוך מאוד (2500+ מילים)</option>
       </select>
-      <div class="sb-label" style="margin-top:10px">Language</div>
+      <div class="sb-label" style="margin-top:10px">שפה</div>
       <select id="writer-language" class="model-select">
         <option value="English">English</option>
         <option value="Hebrew">עברית</option>
@@ -228,7 +228,7 @@
         <option value="Japanese">日本語</option>
         <option value="Chinese">中文</option>
       </select>
-      <div class="sb-label" style="margin-top:10px">Model</div>
+      <div class="sb-label" style="margin-top:10px">מודל</div>
       <select id="writer-model" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
@@ -237,131 +237,131 @@
     </div>
 
     <div class="sb-section hidden" id="web-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="web-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">📝 Deep Summary</div>
-        <div class="cap-badge">⚖️ Bias Detection</div>
-        <div class="cap-badge">✅ Credibility Score</div>
-        <div class="cap-badge">🏢 Entity Extraction</div>
-        <div class="cap-badge">📊 Data Points</div>
-        <div class="cap-badge">💬 Key Quotes</div>
-        <div class="cap-badge">❓ Related Questions</div>
+        <div class="cap-badge">📝 סיכום עמוק</div>
+        <div class="cap-badge">⚖️ זיהוי הטיות</div>
+        <div class="cap-badge">✅ ציון אמינות</div>
+        <div class="cap-badge">🏢 חילוץ ישויות</div>
+        <div class="cap-badge">📊 נקודות נתון</div>
+        <div class="cap-badge">💬 ציטוטים מרכזיים</div>
+        <div class="cap-badge">❓ שאלות קשורות</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="batch-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="batch-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ⚡ (Fast)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro ✦ (Detailed)</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash ⚡⚡</option>
       </select>
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">⚡ Parallel Processing</div>
-        <div class="cap-badge">📊 Batch Statistics</div>
-        <div class="cap-badge">🏷 Auto-Tagging</div>
-        <div class="cap-badge">⭐ Quality Ranking</div>
-        <div class="cap-badge">🎨 Color Extraction</div>
-        <div class="cap-badge">📥 Export JSON/CSV</div>
-        <div class="cap-badge">🔍 Smart Filtering</div>
+        <div class="cap-badge">⚡ עיבוד מקבילי</div>
+        <div class="cap-badge">📊 סטטיסטיקות קבוצה</div>
+        <div class="cap-badge">🏷 תיוג אוטומטי</div>
+        <div class="cap-badge">⭐ דירוג איכות</div>
+        <div class="cap-badge">🎨 חילוץ צבעים</div>
+        <div class="cap-badge">📥 ייצוא JSON/CSV</div>
+        <div class="cap-badge">🔍 סינון חכם</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="data-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="data-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
-      <div class="sb-label" style="margin-top:12px">Question (optional)</div>
-      <input type="text" id="data-question-input" class="edit-instructions-input" placeholder="e.g. What drives sales?"/>
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">שאלה (אופציונלי)</div>
+      <input type="text" id="data-question-input" class="edit-instructions-input" placeholder="לדוגמה: מה מניע מכירות?"/>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">📊 Auto Chart Builder</div>
-        <div class="cap-badge">📈 Statistical Analysis</div>
-        <div class="cap-badge">🔍 Anomaly Detection</div>
-        <div class="cap-badge">🔗 Correlation Finder</div>
-        <div class="cap-badge">💡 AI Insights</div>
-        <div class="cap-badge">⚠️ Data Quality Score</div>
-        <div class="cap-badge">💬 Data Q&amp;A</div>
+        <div class="cap-badge">📊 בנאי גרפים אוטומטי</div>
+        <div class="cap-badge">📈 ניתוח סטטיסטי</div>
+        <div class="cap-badge">🔍 זיהוי חריגים</div>
+        <div class="cap-badge">🔗 מציאת קורלציות</div>
+        <div class="cap-badge">💡 תובנות AI</div>
+        <div class="cap-badge">⚠️ ציון איכות נתונים</div>
+        <div class="cap-badge">💬 שאלות על הנתונים</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="code-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="code-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
-      <div class="sb-label" style="margin-top:12px">Context (optional)</div>
-      <input type="text" id="code-context-input" class="edit-instructions-input" placeholder="e.g. This is a REST API for payments"/>
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">הקשר (אופציונלי)</div>
+      <input type="text" id="code-context-input" class="edit-instructions-input" placeholder="לדוגמה: זהו REST API לתשלומים"/>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">🐛 Bug Detection</div>
-        <div class="cap-badge">🔒 Security Audit</div>
-        <div class="cap-badge">⚡ Performance Issues</div>
-        <div class="cap-badge">♻️ Refactor Suggestions</div>
-        <div class="cap-badge">🧪 Missing Tests</div>
-        <div class="cap-badge">📝 Code Quality Grade</div>
-        <div class="cap-badge">💬 Code Q&amp;A</div>
+        <div class="cap-badge">🐛 זיהוי באגים</div>
+        <div class="cap-badge">🔒 ביקורת אבטחה</div>
+        <div class="cap-badge">⚡ בעיות ביצועים</div>
+        <div class="cap-badge">♻️ הצעות רפקטורינג</div>
+        <div class="cap-badge">🧪 טסטים חסרים</div>
+        <div class="cap-badge">📝 ציון איכות קוד</div>
+        <div class="cap-badge">💬 שאלות על הקוד</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="live-sidebar">
-      <div class="sb-label">Analysis Speed</div>
+      <div class="sb-label">מהירות ניתוח</div>
       <select id="live-model-select" class="model-select">
         <option value="gemini-1.5-flash">Gemini 1.5 Flash ⚡ (Fastest)</option>
         <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro (Detailed)</option>
       </select>
-      <div class="sb-label" style="margin-top:12px">Capture Interval</div>
+      <div class="sb-label" style="margin-top:12px">מרווח צילום</div>
       <div class="frame-slider-row">
         <input type="range" id="live-interval" min="2" max="10" value="4" step="1"/>
         <span id="live-interval-label">4s</span>
       </div>
-      <div class="sb-label" style="margin-top:12px">Focus (optional)</div>
-      <input type="text" id="live-focus-input" class="edit-instructions-input" placeholder="e.g. count people, read text, detect emotions…"/>
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">מיקוד (אופציונלי)</div>
+      <input type="text" id="live-focus-input" class="edit-instructions-input" placeholder="לדוגמה: ספור אנשים, קרא טקסט, זהה רגשות…"/>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">👁 Real-time Analysis</div>
-        <div class="cap-badge">📝 OCR / Text Reading</div>
-        <div class="cap-badge">👥 People Counting</div>
-        <div class="cap-badge">😊 Emotion Detection</div>
-        <div class="cap-badge">🔍 Object Tracking</div>
-        <div class="cap-badge">📊 Scene Change Alerts</div>
+        <div class="cap-badge">👁 ניתוח בזמן אמת</div>
+        <div class="cap-badge">📝 OCR / קריאת טקסט</div>
+        <div class="cap-badge">👥 ספירת אנשים</div>
+        <div class="cap-badge">😊 זיהוי רגשות</div>
+        <div class="cap-badge">🔍 מעקב אחר אובייקטים</div>
+        <div class="cap-badge">📊 התראות שינוי סצנה</div>
       </div>
     </div>
 
     <div class="sb-section hidden" id="doc-sidebar">
-      <div class="sb-label">Analysis Model</div>
+      <div class="sb-label">מודל ניתוח</div>
       <select id="doc-model-select" class="model-select">
         <option value="gemini-2.0-flash">Gemini 2.0 Flash ✦ (Best)</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
       </select>
 
-      <div class="sb-label" style="margin-top:12px">Analysis Focus (optional)</div>
-      <input type="text" id="doc-focus-input" class="edit-instructions-input" placeholder="e.g. financial terms, legal risks…"/>
+      <div class="sb-label" style="margin-top:12px">מיקוד ניתוח (אופציונלי)</div>
+      <input type="text" id="doc-focus-input" class="edit-instructions-input" placeholder="לדוגמה: מונחים פיננסיים, סיכונים משפטיים…"/>
 
-      <div class="sb-label" style="margin-top:12px">Capabilities</div>
+      <div class="sb-label" style="margin-top:12px">יכולות</div>
       <div class="sb-caps">
-        <div class="cap-badge">📊 Data Extraction</div>
-        <div class="cap-badge">🏢 Entity Recognition</div>
-        <div class="cap-badge">📋 Table Parsing</div>
-        <div class="cap-badge">🔗 Citation Mapping</div>
-        <div class="cap-badge">⚠️ Risk Detection</div>
-        <div class="cap-badge">📝 Multi-level Summary</div>
-        <div class="cap-badge">💬 Document Q&amp;A</div>
-        <div class="cap-badge">🌐 Multi-language</div>
+        <div class="cap-badge">📊 חילוץ נתונים</div>
+        <div class="cap-badge">🏢 זיהוי ישויות</div>
+        <div class="cap-badge">📋 ניתוח טבלאות</div>
+        <div class="cap-badge">🔗 מיפוי הפניות</div>
+        <div class="cap-badge">⚠️ זיהוי סיכונים</div>
+        <div class="cap-badge">📝 סיכום רב-שכבתי</div>
+        <div class="cap-badge">💬 שאלות על המסמך</div>
+        <div class="cap-badge">🌐 רב-לשוני</div>
       </div>
     </div>
   </aside>
@@ -374,12 +374,12 @@
       <div id="empty-state" class="empty-state">
         <div class="empty-logo"><svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="url(#g2)"/><path d="M18 32C18 22 32 14 46 22C46 42 32 50 18 42Z" fill="white" opacity=".9"/><defs><linearGradient id="g2" x1="0" y1="0" x2="64" y2="64"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#2563eb"/></linearGradient></defs></svg></div>
         <h1>OmniAI</h1>
-        <p>Multimodal AI — text, images, code, documents, video, and the web</p>
+        <p>בינה מלאכותית רב-אמצעי — טקסט, תמונות, קוד, מסמכים, וידאו ורשת</p>
         <div class="suggestion-grid">
-          <button class="suggestion-card" data-prompt="Explain quantum entanglement with a simple analogy"><span class="si">⚛️</span><span>Explain quantum entanglement</span></button>
-          <button class="suggestion-card" data-prompt="Write a Python script to analyze a CSV file and create visualizations"><span class="si">🐍</span><span>Python data analysis script</span></button>
-          <button class="suggestion-card" data-prompt="What are the latest AI news this week?"><span class="si">🔍</span><span>Latest AI news (web search)</span></button>
-          <button class="suggestion-card" data-prompt="Write a creative short story about a robot discovering emotions"><span class="si">✍️</span><span>Creative writing challenge</span></button>
+          <button class="suggestion-card" data-prompt="הסבר את שזירת הקוואנטים עם אנלוגיה פשוטה"><span class="si">⚛️</span><span>הסבר שזירת קוואנטים</span></button>
+          <button class="suggestion-card" data-prompt="כתוב סקריפט Python לניתוח קובץ CSV ויצירת ויזואליזציות"><span class="si">🐍</span><span>סקריפט ניתוח נתונים Python</span></button>
+          <button class="suggestion-card" data-prompt="מה החדשות האחרונות בתחום ה-AI השבוע?"><span class="si">🔍</span><span>חדשות AI אחרונות (חיפוש ברשת)</span></button>
+          <button class="suggestion-card" data-prompt="כתוב סיפור קצר ויצירתי על רובוט שמגלה רגשות"><span class="si">✍️</span><span>אתגר כתיבה יצירתית</span></button>
         </div>
       </div>
 
@@ -388,7 +388,7 @@
       <div id="input-area" class="input-area">
         <div id="dr-bar" class="dr-bar hidden">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <span>Deep Research Mode — multi-source synthesis report</span>
+          <span>מצב מחקר עמוק — דוח סינתזה ממקורות מרובים</span>
           <button id="dr-off">✕</button>
         </div>
         <div id="file-previews" class="file-previews hidden"></div>
@@ -396,7 +396,7 @@
           <button id="attach-btn" class="icon-btn" title="Attach file">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </button>
-          <textarea id="user-input" placeholder="Ask OmniAI anything…" rows="1"></textarea>
+          <textarea id="user-input" placeholder="שאל את OmniAI כל דבר…" rows="1"></textarea>
           <button id="mic-btn" class="icon-btn" title="Voice input">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
           </button>
@@ -408,7 +408,7 @@
           </button>
         </div>
         <input type="file" id="file-input" accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css" multiple hidden/>
-        <div class="input-footer">OmniAI can make mistakes · Powered by Claude</div>
+        <div class="input-footer">OmniAI עלול לטעות · מופעל על ידי Gemini</div>
       </div>
     </div>
 
@@ -422,11 +422,11 @@
             <defs><linearGradient id="vg" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#ef4444"/></linearGradient></defs>
             <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
           </svg>
-          <h2>Drop your video here</h2>
-          <p>MP4 · MOV · AVI · MKV · WEBM · up to 500 MB</p>
+          <h2>גרור את הוידאו שלך לכאן</h2>
+          <p>MP4 · MOV · AVI · MKV · WEBM · עד 500 MB</p>
           <button class="upload-btn" id="v-pick-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose Video
+            בחר וידאו
           </button>
           <input type="file" id="v-file-input" accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v" hidden/>
         </div>
@@ -437,16 +437,16 @@
         <div class="v-proc-inner">
           <div class="big-spinner"></div>
           <div>
-            <div id="proc-title" class="proc-title">Uploading…</div>
-            <div id="proc-sub" class="proc-sub">Preparing video</div>
+            <div id="proc-title" class="proc-title">מעלה…</div>
+            <div id="proc-sub" class="proc-sub">מכין וידאו</div>
           </div>
         </div>
         <div class="prog-wrap"><div id="prog-bar" class="prog-bar" style="width:0%"></div></div>
         <div id="proc-steps" class="proc-steps">
-          <div class="proc-step" id="step-upload">📤 Uploading video</div>
-          <div class="proc-step" id="step-frames">🎞 Extracting frames</div>
-          <div class="proc-step" id="step-scenes">🔍 Detecting scenes</div>
-          <div class="proc-step" id="step-ready">✅ Ready</div>
+          <div class="proc-step" id="step-upload">📤 מעלה וידאו</div>
+          <div class="proc-step" id="step-frames">🎞 מחלץ פריימים</div>
+          <div class="proc-step" id="step-scenes">🔍 מזהה סצנות</div>
+          <div class="proc-step" id="step-ready">✅ מוכן</div>
         </div>
       </div>
 
@@ -457,14 +457,14 @@
         <div class="studio-topbar">
           <div id="v-meta" class="v-meta"></div>
           <div class="studio-actions">
-            <input type="text" id="edit-instructions" class="edit-instructions-input" placeholder="Edit style: cinematic, fast-paced, documentary…" title="Custom edit instructions for AI"/>
+            <input type="text" id="edit-instructions" class="edit-instructions-input" placeholder="סגנון עריכה: קולנועי, קצבי, דוקומנטרי…" title="הוראות עריכה מותאמות ל-AI"/>
             <button id="ai-edit-btn" class="action-btn action-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              AI Edit
+              עריכה AI
             </button>
             <button id="v-reset-btn" class="action-btn action-ghost">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
-              New Video
+              וידאו חדש
             </button>
           </div>
         </div>
@@ -484,16 +484,16 @@
           <div id="timeline-cursor" class="timeline-cursor"></div>
         </div>
         <div class="timeline-legend">
-          <span class="legend-item"><span class="legend-dot" style="background:#14b8a6"></span>Audio</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#7c3aed"></span>Motion</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Scene change</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Cut point</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#ef4444;opacity:.3;width:14px;border-radius:2px"></span>CUT region</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#14b8a6"></span>אודיו</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#7c3aed"></span>תנועה</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>שינוי סצנה</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>נקודת חיתוך</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ef4444;opacity:.3;width:14px;border-radius:2px"></span>אזור חיתוך</span>
         </div>
 
         <!-- Filmstrip -->
         <div class="filmstrip-wrap">
-          <div class="fs-label">🎞 Extracted Frames</div>
+          <div class="fs-label">🎞 פריימים שחולצו</div>
           <div id="filmstrip" class="filmstrip"></div>
         </div>
 
@@ -502,15 +502,15 @@
           <div class="vqa-header" onclick="toggleVideoQA()">
             <div class="vqa-badge">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              Video Q&A
+              שאל/י על הוידאו
             </div>
-            <span style="font-size:11px;color:var(--text3)">Ask Claude about your video</span>
+            <span style="font-size:11px;color:var(--text3)">שאל את Gemini על הוידאו שלך</span>
             <svg class="vqa-chevron" id="vqa-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div class="vqa-body hidden" id="vqa-body">
             <div class="vqa-messages" id="vqa-messages"></div>
             <div class="vqa-input-row">
-              <input class="vqa-input" id="vqa-input" type="text" placeholder="Ask anything about this video…" onkeydown="if(event.key==='Enter')sendVideoChat()"/>
+              <input class="vqa-input" id="vqa-input" type="text" placeholder="שאל כל דבר על הוידאו הזה…" onkeydown="if(event.key==='Enter')sendVideoChat()"/>
               <button class="vqa-send" id="vqa-send" onclick="sendVideoChat()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
@@ -521,25 +521,25 @@
         <!-- AI Video Search -->
         <div class="vsearch-wrap" id="vsearch-wrap">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="vsearch-input" class="vsearch-input" placeholder="Find moment: 'person laughing', 'outdoor scene', 'product on table'…" onkeydown="if(event.key==='Enter')videoSearch()"/>
-          <button class="vsearch-btn" id="vsearch-btn" onclick="videoSearch()">Find</button>
+          <input type="text" id="vsearch-input" class="vsearch-input" placeholder="חפש רגע: 'אדם צוחק', 'סצנה בחוץ', 'מוצר על שולחן'…" onkeydown="if(event.key==='Enter')videoSearch()"/>
+          <button class="vsearch-btn" id="vsearch-btn" onclick="videoSearch()">חפש</button>
           <div id="vsearch-result" class="vsearch-result hidden"></div>
         </div>
 
         <!-- Results tabs -->
         <div class="results-section">
           <div class="results-tabs">
-            <button class="rtab active" data-tab="overview">Overview</button>
-            <button class="rtab" data-tab="storyboard">🖼 Storyboard</button>
-            <button class="rtab" data-tab="thumbnail">🖼 Thumbnail</button>
-            <button class="rtab" data-tab="cuts">✂️ Cuts</button>
-            <button class="rtab" data-tab="scenes">🎬 Scenes</button>
-            <button class="rtab" data-tab="color">🎨 Color</button>
-            <button class="rtab" data-tab="captions">💬 Captions</button>
-            <button class="rtab" data-tab="content">✍️ Content</button>
+            <button class="rtab active" data-tab="overview">סקירה</button>
+            <button class="rtab" data-tab="storyboard">🖼 סטוריבורד</button>
+            <button class="rtab" data-tab="thumbnail">🖼 תמונה ממוזערת</button>
+            <button class="rtab" data-tab="cuts">✂️ חיתוכים</button>
+            <button class="rtab" data-tab="scenes">🎬 סצנות</button>
+            <button class="rtab" data-tab="color">🎨 צבע</button>
+            <button class="rtab" data-tab="captions">💬 כתוביות</button>
+            <button class="rtab" data-tab="content">✍️ תוכן</button>
             <button class="rtab" data-tab="ffmpeg">⚙️ FFmpeg</button>
-            <button class="rtab" data-tab="shorts">📱 Shorts</button>
-            <button class="rtab" data-tab="export">📥 Export</button>
+            <button class="rtab" data-tab="shorts">📱 שורטס</button>
+            <button class="rtab" data-tab="export">📥 ייצוא</button>
           </div>
 
           <div id="results-body" class="results-body">
@@ -548,11 +548,11 @@
                 <div class="ap-icon">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".3"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                 </div>
-                <div class="ap-title">AI Edit Engine</div>
-                <div class="ap-sub">Click <strong>AI Edit</strong> to analyze your video and get:<br/>frame-accurate cut decisions · color grade guide · captions · FFmpeg scripts · Shorts optimizer</div>
+                <div class="ap-title">מנוע עריכה AI</div>
+                <div class="ap-sub">לחץ על <strong>עריכה AI</strong> לניתוח הוידאו וקבל:<br/>החלטות חיתוך מדויקות · מדריך גריידינג צבע · כתוביות · סקריפטים FFmpeg · אופטימיזציה לשורטס</div>
                 <button class="upload-btn" style="margin-top:16px" onclick="document.getElementById('ai-edit-btn').click()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  Run AI Edit
+                  הרץ עריכה AI
                 </button>
               </div>
               <div id="tab-overview-content" class="hidden"></div>
@@ -578,17 +578,17 @@
       <div class="writer-layout">
         <div class="writer-input-col">
           <div class="writer-prompt-wrap">
-            <div class="img-card-title" style="padding:0 0 8px;font-size:13px">✍️ Topic / Brief</div>
-            <textarea id="writer-topic" class="writer-textarea" placeholder="Describe what you want to write about. Be specific: target audience, key points to cover, call-to-action, any specific details to include…" rows="6"></textarea>
-            <div class="sb-label" style="margin-top:10px">Extra instructions (optional)</div>
-            <input type="text" id="writer-extra" class="edit-instructions-input" placeholder="e.g. include 3 real examples, avoid jargon, mention our product CTA"/>
+            <div class="img-card-title" style="padding:0 0 8px;font-size:13px">✍️ נושא / בריף</div>
+            <textarea id="writer-topic" class="writer-textarea" placeholder="תאר מה אתה רוצה לכתוב. היה ספציפי: קהל יעד, נקודות מרכזיות, קריאה לפעולה, פרטים ספציפיים לכלול…" rows="6"></textarea>
+            <div class="sb-label" style="margin-top:10px">הוראות נוספות (אופציונלי)</div>
+            <input type="text" id="writer-extra" class="edit-instructions-input" placeholder="לדוגמה: כלול 3 דוגמאות אמיתיות, הימנע מז'רגון, ציין CTA של המוצר"/>
             <div class="writer-actions">
               <button class="action-btn action-primary" id="writer-generate-btn" style="flex:1">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                Generate
+                צור
               </button>
-              <button class="action-btn action-ghost" id="writer-clear-btn">Clear</button>
-              <button class="action-btn action-ghost" id="writer-copy-btn">Copy</button>
+              <button class="action-btn action-ghost" id="writer-clear-btn">נקה</button>
+              <button class="action-btn action-ghost" id="writer-copy-btn">העתק</button>
             </div>
           </div>
           <!-- Word count + reading time -->
@@ -596,18 +596,18 @@
         </div>
         <div class="writer-output-col">
           <div class="writer-output-header">
-            <span id="writer-output-label" class="img-card-title" style="font-size:13px">📄 Output</span>
+            <span id="writer-output-label" class="img-card-title" style="font-size:13px">📄 פלט</span>
             <div style="display:flex;gap:6px">
-              <button class="field-copy-btn" onclick="copyWriterOutput()">Copy</button>
-              <button class="field-copy-btn" onclick="downloadWriterOutput()">Download</button>
-              <button class="field-copy-btn" onclick="improveWriterOutput()">✨ Improve</button>
+              <button class="field-copy-btn" onclick="copyWriterOutput()">העתק</button>
+              <button class="field-copy-btn" onclick="downloadWriterOutput()">הורד</button>
+              <button class="field-copy-btn" onclick="improveWriterOutput()">✨ שפר</button>
             </div>
           </div>
           <div id="writer-output" class="writer-output">
             <div class="writer-placeholder">
               <div style="font-size:32px">✍️</div>
-              <div style="font-size:14px;color:var(--text3);margin-top:8px">Your generated content will appear here</div>
-              <div style="font-size:12px;color:var(--text3);margin-top:4px">Choose a template, write your brief, and click Generate</div>
+              <div style="font-size:14px;color:var(--text3);margin-top:8px">התוכן שנוצר יופיע כאן</div>
+              <div style="font-size:12px;color:var(--text3);margin-top:4px">בחר תבנית, כתוב בריף, ולחץ על צור</div>
             </div>
           </div>
         </div>
@@ -619,16 +619,16 @@
       <div class="web-layout">
         <div class="web-url-bar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          <input type="url" id="web-url-input" class="web-url-input" placeholder="Paste any URL to analyze — news article, blog post, product page, research paper…" onkeydown="if(event.key==='Enter')analyzeUrl()"/>
+          <input type="url" id="web-url-input" class="web-url-input" placeholder="הדבק כתובת URL לניתוח — כתבת חדשות, פוסט בלוג, עמוד מוצר, מאמר מחקרי…" onkeydown="if(event.key==='Enter')analyzeUrl()"/>
           <button class="action-btn action-primary" id="web-analyze-btn" onclick="analyzeUrl()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            Analyze
+            נתח
           </button>
         </div>
 
         <!-- Quick suggestions -->
         <div class="web-suggestions" id="web-suggestions">
-          <div class="web-sug-label">Try analyzing:</div>
+          <div class="web-sug-label">נסה לנתח:</div>
           <div class="web-sug-chips">
             <button class="web-sug-chip" onclick="$('web-url-input').value='https://techcrunch.com';analyzeUrl()">TechCrunch</button>
             <button class="web-sug-chip" onclick="$('web-url-input').value='https://news.ycombinator.com';analyzeUrl()">Hacker News</button>
@@ -637,7 +637,7 @@
         </div>
 
         <div id="web-processing" class="img-processing hidden" style="min-height:200px">
-          <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Fetching &amp; Analyzing…</div><div class="proc-sub">Fetching page content</div></div></div>
+          <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">מביא ומנתח…</div><div class="proc-sub">מביא תוכן העמוד</div></div></div>
         </div>
 
         <div id="web-results" class="web-results hidden">
@@ -650,37 +650,37 @@
           <div class="web-workspace">
             <div class="web-left-col">
               <div class="img-card">
-                <div class="img-card-title">📋 Summary</div>
+                <div class="img-card-title">📋 סיכום</div>
                 <div id="web-exec" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">• Key Points</div>
+                <div class="img-card-title">• נקודות מרכזיות</div>
                 <div id="web-points" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">💬 Notable Quotes</div>
+                <div class="img-card-title">💬 ציטוטים בולטים</div>
                 <div id="web-quotes" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">📊 Data Points &amp; Stats</div>
+                <div class="img-card-title">📊 נקודות נתון וסטטיסטיקות</div>
                 <div id="web-data" class="img-card-body"></div>
               </div>
             </div>
             <div class="web-right-col">
               <div class="img-card">
-                <div class="img-card-title">⚖️ Bias &amp; Credibility</div>
+                <div class="img-card-title">⚖️ הטיה ואמינות</div>
                 <div id="web-credibility" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">🏢 Key Entities</div>
+                <div class="img-card-title">🏢 ישויות מרכזיות</div>
                 <div id="web-entities" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">❓ Related Questions</div>
+                <div class="img-card-title">❓ שאלות קשורות</div>
                 <div id="web-questions" class="img-card-body"></div>
               </div>
               <div class="img-card">
-                <div class="img-card-title">🏷 Topics &amp; Keywords</div>
+                <div class="img-card-title">🏷 נושאים ומילות מפתח</div>
                 <div id="web-keywords" class="img-tags-wrap" style="display:flex;flex-wrap:wrap;gap:5px"></div>
               </div>
             </div>
@@ -698,14 +698,14 @@
             <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
           </svg>
           <div>
-            <div style="font-size:16px;font-weight:700;color:var(--text)">Drop up to 20 images</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:4px">All analyzed in parallel — JPG · PNG · WEBP · GIF</div>
+            <div style="font-size:16px;font-weight:700;color:var(--text)">גרור עד 20 תמונות</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:4px">כולן מנותחות במקביל — JPG · PNG · WEBP · GIF</div>
           </div>
           <div style="display:flex;gap:10px">
-            <button class="upload-btn" id="batch-pick-btn">Choose Images</button>
+            <button class="upload-btn" id="batch-pick-btn">בחר תמונות</button>
             <button class="action-btn action-ghost hidden" id="batch-run-btn" onclick="runBatch()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              Analyze All (<span id="batch-count">0</span>)
+              נתח הכל (<span id="batch-count">0</span>)
             </button>
           </div>
           <input type="file" id="batch-file-input" accept="image/*" multiple hidden/>
@@ -713,7 +713,7 @@
 
         <div id="batch-progress-bar-wrap" class="batch-progress-wrap hidden">
           <div class="prog-wrap"><div id="batch-prog-bar" class="prog-bar" style="width:0%"></div></div>
-          <div id="batch-progress-text" style="font-size:12px;color:var(--text3);text-align:center;margin-top:6px">Analyzing…</div>
+          <div id="batch-progress-text" style="font-size:12px;color:var(--text3);text-align:center;margin-top:6px">מנתח…</div>
         </div>
 
         <!-- Preview grid -->
@@ -724,9 +724,9 @@
           <div class="batch-results-header">
             <span id="batch-results-count" class="img-card-title" style="font-size:14px"></span>
             <div style="display:flex;gap:8px">
-              <button class="field-copy-btn" onclick="exportBatchJSON()">Export JSON</button>
-              <button class="field-copy-btn" onclick="exportBatchCSV()">Export CSV</button>
-              <button class="action-btn action-ghost" id="batch-clear-btn" onclick="clearBatch()">Clear All</button>
+              <button class="field-copy-btn" onclick="exportBatchJSON()">ייצוא JSON</button>
+              <button class="field-copy-btn" onclick="exportBatchCSV()">ייצוא CSV</button>
+              <button class="action-btn action-ghost" id="batch-clear-btn" onclick="clearBatch()">נקה הכל</button>
             </div>
           </div>
           <div id="batch-results-grid" class="batch-results-grid"></div>
@@ -742,24 +742,24 @@
             <defs><linearGradient id="dag" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#10b981"/></linearGradient></defs>
             <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
           </svg>
-          <h2>Drop your data file here</h2>
-          <p>CSV · JSON · TSV · up to 10 MB</p>
+          <h2>גרור את קובץ הנתונים לכאן</h2>
+          <p>CSV · JSON · TSV · עד 10 MB</p>
           <button class="upload-btn" id="data-pick-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose File
+            בחר קובץ
           </button>
           <input type="file" id="data-file-input" accept=".csv,.json,.tsv,.txt" hidden/>
         </div>
       </div>
       <div id="data-processing" class="img-processing hidden">
-        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Analyzing Data…</div><div class="proc-sub">Claude is crunching numbers</div></div></div>
+        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">מנתח נתונים…</div><div class="proc-sub">Gemini מחשב</div></div></div>
       </div>
       <div id="data-studio" class="data-studio hidden">
         <div class="img-topbar">
           <div id="data-meta" class="img-meta"></div>
           <div class="studio-actions">
-            <button id="data-reanalyze-btn" class="action-btn action-primary">Re-Analyze</button>
-            <button id="data-reset-btn" class="action-btn action-ghost">New File</button>
+            <button id="data-reanalyze-btn" class="action-btn action-primary">נתח מחדש</button>
+            <button id="data-reset-btn" class="action-btn action-ghost">קובץ חדש</button>
           </div>
         </div>
         <div class="data-workspace">
@@ -771,49 +771,49 @@
               <div id="data-quality-bar" style="margin-top:10px"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">💡 Key Insights</div>
+              <div class="img-card-title">💡 תובנות מרכזיות</div>
               <div id="data-insights" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">📊 Auto Charts</div>
+              <div class="img-card-title">📊 גרפים אוטומטיים</div>
               <div id="data-charts" class="data-charts-wrap"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🔗 Correlations</div>
+              <div class="img-card-title">🔗 קורלציות</div>
               <div id="data-correlations" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">⚠️ Anomalies &amp; Trends</div>
+              <div class="img-card-title">⚠️ חריגים ומגמות</div>
               <div id="data-anomalies" class="img-card-body"></div>
             </div>
           </div>
           <!-- Columns + stats -->
           <div class="data-right-col">
             <div class="img-card">
-              <div class="img-card-title">📋 Column Overview</div>
+              <div class="img-card-title">📋 סקירת עמודות</div>
               <div id="data-columns" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">📈 Statistics</div>
+              <div class="img-card-title">📈 סטטיסטיקות</div>
               <div id="data-stats" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🚀 Recommendations</div>
+              <div class="img-card-title">🚀 המלצות</div>
               <div id="data-recs" class="img-card-body"></div>
             </div>
             <!-- Data preview table -->
             <div class="img-card">
-              <div class="img-card-title">🗄 Data Preview</div>
+              <div class="img-card-title">🗄 תצוגה מקדימה</div>
               <div id="data-preview-table" class="data-preview-wrap"></div>
             </div>
           </div>
         </div>
         <!-- Q&A -->
         <div class="img-chat-wrap">
-          <div class="img-chat-title">💬 Ask about this Data</div>
+          <div class="img-chat-title">💬 שאל על הנתונים</div>
           <div id="data-chat-messages" class="img-chat-messages"></div>
           <div class="img-chat-input-row">
-            <input id="data-chat-input" class="vqa-input" type="text" placeholder="Ask anything: average sales by region, trend over time, top 10 rows by value…" onkeydown="if(event.key==='Enter')sendDataChat()"/>
+            <input id="data-chat-input" class="vqa-input" type="text" placeholder="שאל כל דבר: מכירות ממוצעות לפי אזור, מגמה לאורך זמן, 10 שורות עליונות לפי ערך…" onkeydown="if(event.key==='Enter')sendDataChat()"/>
             <button class="vqa-send" onclick="sendDataChat()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -830,24 +830,24 @@
             <defs><linearGradient id="cog" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
             <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
           </svg>
-          <h2>Drop your code files here</h2>
-          <p>JS · TS · PY · GO · JAVA · C++ · RUST · up to 10 files</p>
+          <h2>גרור קבצי קוד לכאן</h2>
+          <p>JS · TS · PY · GO · JAVA · C++ · RUST · עד 10 קבצים</p>
           <button class="upload-btn" id="code-pick-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose Files
+            בחר קבצים
           </button>
           <input type="file" id="code-file-input" accept=".js,.ts,.tsx,.jsx,.py,.go,.java,.cpp,.c,.h,.rs,.rb,.php,.cs,.swift,.kt,.vue,.html,.css,.sql,.sh,.yaml,.yml,.toml,.json,.xml" multiple hidden/>
         </div>
       </div>
       <div id="code-processing" class="img-processing hidden">
-        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">Analyzing Code…</div><div class="proc-sub">Security · Bugs · Performance · Quality</div></div></div>
+        <div class="v-proc-inner"><div class="big-spinner"></div><div><div class="proc-title">מנתח קוד…</div><div class="proc-sub">אבטחה · באגים · ביצועים · איכות</div></div></div>
       </div>
       <div id="code-studio" class="code-studio hidden">
         <div class="img-topbar">
           <div id="code-meta" class="img-meta"></div>
           <div class="studio-actions">
-            <button id="code-reanalyze-btn" class="action-btn action-primary">Re-Analyze</button>
-            <button id="code-reset-btn" class="action-btn action-ghost">New Files</button>
+            <button id="code-reanalyze-btn" class="action-btn action-primary">נתח מחדש</button>
+            <button id="code-reset-btn" class="action-btn action-ghost">קבצים חדשים</button>
           </div>
         </div>
         <div class="code-workspace">
@@ -859,33 +859,33 @@
               <div id="code-summary-text" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🐛 Bugs <span id="bug-count" class="code-badge-red"></span></div>
+              <div class="img-card-title">🐛 באגים <span id="bug-count" class="code-badge-red"></span></div>
               <div id="code-bugs" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🔒 Security Issues <span id="sec-count" class="code-badge-red"></span></div>
+              <div class="img-card-title">🔒 בעיות אבטחה <span id="sec-count" class="code-badge-red"></span></div>
               <div id="code-security" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">⚡ Performance</div>
+              <div class="img-card-title">⚡ ביצועים</div>
               <div id="code-performance" class="img-card-body"></div>
             </div>
           </div>
           <div class="code-right-col">
             <div class="img-card">
-              <div class="img-card-title">♻️ Refactoring <span id="ref-count" class="code-badge-amber"></span></div>
+              <div class="img-card-title">♻️ רפקטורינג <span id="ref-count" class="code-badge-amber"></span></div>
               <div id="code-refactor" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🧪 Tests &amp; Coverage</div>
+              <div class="img-card-title">🧪 טסטים וכיסוי</div>
               <div id="code-tests" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">✅ Best Practices</div>
+              <div class="img-card-title">✅ שיטות עבודה מומלצות</div>
               <div id="code-practices" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">📝 PR Summary</div>
+              <div class="img-card-title">📝 סיכום PR</div>
               <div id="code-pr-summary" class="img-card-body"></div>
             </div>
           </div>
@@ -893,10 +893,10 @@
         <!-- Code viewer + Q&A -->
         <div class="code-file-viewer" id="code-file-viewer"></div>
         <div class="img-chat-wrap">
-          <div class="img-chat-title">💬 Ask about this Code</div>
+          <div class="img-chat-title">💬 שאל על הקוד</div>
           <div id="code-chat-messages" class="img-chat-messages"></div>
           <div class="img-chat-input-row">
-            <input id="code-chat-input" class="vqa-input" type="text" placeholder="Ask: explain line 42, how to add auth, refactor the loop, write tests for this…" onkeydown="if(event.key==='Enter')sendCodeChat()"/>
+            <input id="code-chat-input" class="vqa-input" type="text" placeholder="שאל: הסבר שורה 42, איך להוסיף אותנטיקציה, רפקטר את הלופ, כתוב טסטים…" onkeydown="if(event.key==='Enter')sendCodeChat()"/>
             <button class="vqa-send" onclick="sendCodeChat()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -914,18 +914,18 @@
             <canvas id="live-capture-canvas" class="hidden"></canvas>
             <div class="live-status-bar" id="live-status-bar">
               <span class="live-dot" id="live-dot"></span>
-              <span id="live-status-text">Camera off</span>
+              <span id="live-status-text">מצלמה כבויה</span>
             </div>
           </div>
           <div class="live-controls">
             <button class="upload-btn" id="live-start-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-              Start Live Analysis
+              התחל ניתוח חי
             </button>
-            <button class="action-btn action-ghost hidden" id="live-stop-btn">Stop</button>
+            <button class="action-btn action-ghost hidden" id="live-stop-btn">עצור</button>
             <button class="action-btn action-ghost" id="live-snap-btn" disabled>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              Snap &amp; Analyze
+              צלם ונתח
             </button>
           </div>
           <!-- Frame history -->
@@ -935,9 +935,9 @@
           <div class="live-feed-header">
             <div class="live-badge" id="live-analyzing-badge">
               <div class="tool-spinner" style="width:10px;height:10px;border-color:rgba(16,185,129,.3);border-top-color:#10b981"></div>
-              Analyzing…
+              מנתח…
             </div>
-            <span style="font-size:11px;color:var(--text3)" id="live-frame-count">0 frames analyzed</span>
+            <span style="font-size:11px;color:var(--text3)" id="live-frame-count">0 פריימים נותחו</span>
           </div>
           <div id="live-analysis-feed" class="live-analysis-feed"></div>
         </div>
@@ -953,16 +953,16 @@
             <defs><linearGradient id="ag" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#10b981"/></linearGradient></defs>
             <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
           </svg>
-          <h2>Drop your audio here</h2>
-          <p>MP3 · WAV · M4A · OGG · FLAC · AAC · up to 50 MB</p>
+          <h2>גרור את האודיו שלך לכאן</h2>
+          <p>MP3 · WAV · M4A · OGG · FLAC · AAC · עד 50 MB</p>
           <div class="img-drop-btns">
             <button class="upload-btn" id="aud-pick-btn">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Choose Audio
+              בחר אודיו
             </button>
             <button class="upload-btn upload-btn-secondary" id="aud-rec-trigger-btn">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6" fill="currentColor" opacity=".7"/><circle cx="12" cy="12" r="10"/></svg>
-              Record
+              הקלט
             </button>
           </div>
           <input type="file" id="aud-file-input" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac,.opus" hidden/>
@@ -974,9 +974,9 @@
           <div class="img-webcam-controls">
             <button class="upload-btn" id="aud-stop-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-              Stop &amp; Analyze
+              עצור ונתח
             </button>
-            <button class="action-btn action-ghost" id="aud-rec-close-btn">Cancel</button>
+            <button class="action-btn action-ghost" id="aud-rec-close-btn">ביטול</button>
           </div>
         </div>
       </div>
@@ -984,7 +984,7 @@
       <div id="aud-processing" class="img-processing hidden">
         <div class="v-proc-inner">
           <div class="big-spinner"></div>
-          <div><div class="proc-title">Analyzing Audio…</div><div id="aud-proc-sub" class="proc-sub">Uploading</div></div>
+          <div><div class="proc-title">מנתח אודיו…</div><div id="aud-proc-sub" class="proc-sub">מעלה</div></div>
         </div>
       </div>
 
@@ -994,9 +994,9 @@
           <div class="studio-actions">
             <button id="aud-reanalyze-btn" class="action-btn action-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
-              Re-Analyze
+              נתח מחדש
             </button>
-            <button id="aud-reset-btn" class="action-btn action-ghost">New Audio</button>
+            <button id="aud-reset-btn" class="action-btn action-ghost">אודיו חדש</button>
           </div>
         </div>
 
@@ -1011,15 +1011,15 @@
         <div class="aud-workspace">
           <div class="aud-main-col">
             <div class="img-card" id="aud-summary-card">
-              <div class="img-card-title">📋 Summary &amp; Overview</div>
+              <div class="img-card-title">📋 סיכום וסקירה</div>
               <div id="aud-summary" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">📝 Full Transcript</div>
+              <div class="img-card-title">📝 תמלול מלא</div>
               <div id="aud-transcript" class="aud-transcript-body"></div>
               <div class="aud-transcript-actions">
-                <button class="field-copy-btn" onclick="copyAudioTranscript()">Copy Transcript</button>
-                <button class="field-copy-btn" onclick="downloadAudioSRT()">Download SRT</button>
+                <button class="field-copy-btn" onclick="copyAudioTranscript()">העתק תמלול</button>
+                <button class="field-copy-btn" onclick="downloadAudioSRT()">הורד SRT</button>
               </div>
             </div>
             <div class="img-card">
@@ -1027,29 +1027,29 @@
               <div id="aud-quotes" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">✅ Action Items</div>
+              <div class="img-card-title">✅ פריטי פעולה</div>
               <div id="aud-actions" class="img-card-body"></div>
             </div>
           </div>
           <div class="aud-side-col">
             <div class="img-card">
-              <div class="img-card-title">📍 Chapters</div>
+              <div class="img-card-title">📍 פרקים</div>
               <div id="aud-chapters" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">👥 Speakers</div>
+              <div class="img-card-title">👥 דוברים</div>
               <div id="aud-speakers" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🎵 Music Analysis</div>
+              <div class="img-card-title">🎵 ניתוח מוזיקה</div>
               <div id="aud-music" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🔈 Audio Quality</div>
+              <div class="img-card-title">🔈 איכות אודיו</div>
               <div id="aud-quality" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">🏷 Topics &amp; Keywords</div>
+              <div class="img-card-title">🏷 נושאים ומילות מפתח</div>
               <div id="aud-topics" class="img-tags-wrap" style="gap:5px;display:flex;flex-wrap:wrap"></div>
             </div>
           </div>
@@ -1059,11 +1059,11 @@
         <div class="img-chat-wrap">
           <div class="img-chat-title">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            Chat with this Audio
+            צ'אט עם האודיו
           </div>
           <div id="aud-chat-messages" class="img-chat-messages"></div>
           <div class="img-chat-input-row">
-            <input id="aud-chat-input" class="vqa-input" type="text" placeholder="Ask about transcript, speakers, topics…" onkeydown="if(event.key==='Enter')sendAudioChat()"/>
+            <input id="aud-chat-input" class="vqa-input" type="text" placeholder="שאל על תמלול, דוברים, נושאים…" onkeydown="if(event.key==='Enter')sendAudioChat()"/>
             <button class="vqa-send" onclick="sendAudioChat()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -1081,11 +1081,11 @@
             <defs><linearGradient id="dg" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#ef4444"/></linearGradient></defs>
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
           </svg>
-          <h2>Drop your document here</h2>
-          <p>PDF · TXT · MD · CSV · JSON · HTML · up to 32 MB</p>
+          <h2>גרור את המסמך שלך לכאן</h2>
+          <p>PDF · TXT · MD · CSV · JSON · HTML · עד 32 MB</p>
           <button class="upload-btn" id="doc-pick-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Choose Document
+            בחר מסמך
           </button>
           <input type="file" id="doc-file-input" accept=".pdf,.txt,.md,.csv,.json,.html,.htm,.xml,.docx" hidden/>
         </div>
@@ -1094,7 +1094,7 @@
       <div id="doc-processing" class="img-processing hidden">
         <div class="v-proc-inner">
           <div class="big-spinner"></div>
-          <div><div class="proc-title">Analyzing Document…</div><div id="doc-proc-sub" class="proc-sub">Uploading</div></div>
+          <div><div class="proc-title">מנתח מסמך…</div><div id="doc-proc-sub" class="proc-sub">מעלה</div></div>
         </div>
       </div>
 
@@ -1104,9 +1104,9 @@
           <div class="studio-actions">
             <button id="doc-reanalyze-btn" class="action-btn action-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
-              Re-Analyze
+              נתח מחדש
             </button>
-            <button id="doc-reset-btn" class="action-btn action-ghost">New Document</button>
+            <button id="doc-reset-btn" class="action-btn action-ghost">מסמך חדש</button>
           </div>
         </div>
 
@@ -1119,19 +1119,19 @@
               <div id="doc-one-liner" class="doc-one-liner"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">📋 Executive Summary</div>
+              <div class="img-card-title">📋 סיכום מנהלים</div>
               <div id="doc-exec" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">• Key Points</div>
+              <div class="img-card-title">• נקודות מרכזיות</div>
               <div id="doc-bullets" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">⚠️ Risks &amp; Warnings</div>
+              <div class="img-card-title">⚠️ סיכונים ואזהרות</div>
               <div id="doc-risks" class="img-card-body"></div>
             </div>
             <div class="img-card">
-              <div class="img-card-title">✅ Action Items</div>
+              <div class="img-card-title">✅ פריטי פעולה</div>
               <div id="doc-actions" class="img-card-body"></div>
             </div>
           </div>
@@ -1139,10 +1139,10 @@
           <!-- Extraction column -->
           <div class="doc-extract-col">
             <div class="doc-tabs">
-              <button class="doc-tab active" data-dtab="entities">🏢 Entities</button>
-              <button class="doc-tab" data-dtab="structure">📑 Structure</button>
-              <button class="doc-tab" data-dtab="data">📊 Data</button>
-              <button class="doc-tab" data-dtab="citations">🔗 Citations</button>
+              <button class="doc-tab active" data-dtab="entities">🏢 ישויות</button>
+              <button class="doc-tab" data-dtab="structure">📑 מבנה</button>
+              <button class="doc-tab" data-dtab="data">📊 נתונים</button>
+              <button class="doc-tab" data-dtab="citations">🔗 הפניות</button>
             </div>
             <div id="dtab-entities" class="doc-tab-panel">
               <div id="doc-entities" class="img-card-body"></div>
@@ -1157,7 +1157,7 @@
               <div id="doc-citations" class="img-card-body"></div>
             </div>
             <div class="img-card" style="margin-top:10px">
-              <div class="img-card-title">🏷 Topics &amp; Keywords</div>
+              <div class="img-card-title">🏷 נושאים ומילות מפתח</div>
               <div id="doc-keywords" class="img-tags-wrap" style="display:flex;flex-wrap:wrap;gap:5px"></div>
             </div>
           </div>
@@ -1167,11 +1167,11 @@
         <div class="img-chat-wrap">
           <div class="img-chat-title">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            Ask about this Document
+            שאל על המסמך
           </div>
           <div id="doc-chat-messages" class="img-chat-messages"></div>
           <div class="img-chat-input-row">
-            <input id="doc-chat-input" class="vqa-input" type="text" placeholder="Ask anything: summarize section 3, find all dates, extract the table…" onkeydown="if(event.key==='Enter')sendDocChat()"/>
+            <input id="doc-chat-input" class="vqa-input" type="text" placeholder="שאל כל דבר: סכם סעיף 3, מצא כל התאריכים, חלץ את הטבלה…" onkeydown="if(event.key==='Enter')sendDocChat()"/>
             <button class="vqa-send" onclick="sendDocChat()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -1190,16 +1190,16 @@
             <defs><linearGradient id="ig" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#06b6d4"/></linearGradient></defs>
             <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
           </svg>
-          <h2>Drop an image here</h2>
-          <p>PNG · JPG · WEBP · GIF · BMP · up to 20 MB</p>
+          <h2>גרור תמונה לכאן</h2>
+          <p>PNG · JPG · WEBP · GIF · BMP · עד 20 MB</p>
           <div class="img-drop-btns">
             <button class="upload-btn" id="img-pick-btn">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Choose Image
+              בחר תמונה
             </button>
             <button class="upload-btn upload-btn-secondary" id="img-cam-trigger-btn">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12C2 6.5 6.5 2 12 2s10 4.5 10 10-4.5 10-10 10S2 17.5 2 12z"/></svg>
-              Webcam
+              מצלמה
             </button>
           </div>
           <input type="file" id="img-file-input" accept="image/*" hidden/>
@@ -1210,9 +1210,9 @@
           <div class="img-webcam-controls">
             <button class="upload-btn" id="img-capture-btn">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-              Capture
+              צלם
             </button>
-            <button class="action-btn action-ghost" id="img-cam-close-btn">Close</button>
+            <button class="action-btn action-ghost" id="img-cam-close-btn">סגור</button>
           </div>
         </div>
       </div>
@@ -1222,8 +1222,8 @@
         <div class="v-proc-inner">
           <div class="big-spinner"></div>
           <div>
-            <div class="proc-title">Analyzing Image…</div>
-            <div id="img-proc-sub" class="proc-sub">Uploading to AI</div>
+            <div class="proc-title">מנתח תמונה…</div>
+            <div id="img-proc-sub" class="proc-sub">מעלה ל-AI</div>
           </div>
         </div>
       </div>
@@ -1235,9 +1235,9 @@
           <div class="studio-actions">
             <button id="img-reanalyze-btn" class="action-btn action-primary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
-              Re-Analyze
+              נתח מחדש
             </button>
-            <button id="img-reset-btn" class="action-btn action-ghost">New Image</button>
+            <button id="img-reset-btn" class="action-btn action-ghost">תמונה חדשה</button>
           </div>
         </div>
 
@@ -1263,57 +1263,57 @@
           <!-- Right: analysis panels -->
           <div class="img-analysis-col">
             <div id="img-desc-card" class="img-card">
-              <div class="img-card-title">📝 Description</div>
+              <div class="img-card-title">📝 תיאור</div>
               <div id="img-desc" class="img-card-body"></div>
             </div>
 
             <div class="img-cards-row">
               <div id="img-objects-card" class="img-card">
-                <div class="img-card-title">🔍 Objects &amp; Subjects</div>
+                <div class="img-card-title">🔍 אובייקטים ונושאים</div>
                 <div id="img-objects" class="img-tag-list"></div>
               </div>
               <div id="img-faces-card" class="img-card">
-                <div class="img-card-title">😊 Faces &amp; People</div>
+                <div class="img-card-title">😊 פנים ואנשים</div>
                 <div id="img-faces" class="img-card-body"></div>
               </div>
             </div>
 
             <div class="img-cards-row">
               <div id="img-composition-card" class="img-card">
-                <div class="img-card-title">📐 Composition</div>
+                <div class="img-card-title">📐 קומפוזיציה</div>
                 <div id="img-composition" class="img-card-body"></div>
               </div>
               <div id="img-lighting-card" class="img-card">
-                <div class="img-card-title">💡 Lighting &amp; Mood</div>
+                <div class="img-card-title">💡 תאורה ומצב רוח</div>
                 <div id="img-lighting" class="img-card-body"></div>
               </div>
             </div>
 
             <div class="img-cards-row">
               <div id="img-technical-card" class="img-card">
-                <div class="img-card-title">⚙️ Technical</div>
+                <div class="img-card-title">⚙️ טכני</div>
                 <div id="img-technical" class="img-card-body"></div>
               </div>
               <div id="img-quality-card" class="img-card">
-                <div class="img-card-title">⭐ Quality Score</div>
+                <div class="img-card-title">⭐ ציון איכות</div>
                 <div id="img-quality" class="img-card-body"></div>
               </div>
             </div>
 
             <div id="img-strengths-card" class="img-card">
-              <div class="img-card-title">💪 Strengths &amp; Improvements</div>
+              <div class="img-card-title">💪 חוזקות ושיפורים</div>
               <div id="img-strengths" class="img-card-body"></div>
             </div>
 
             <div id="img-prompt-card" class="img-card img-prompt-card">
-              <div class="img-card-title">✨ AI Regeneration Prompt
-                <button class="field-copy-btn" onclick="copyImagePrompt()">Copy</button>
+              <div class="img-card-title">✨ פרומפט לרגנרציה AI
+                <button class="field-copy-btn" onclick="copyImagePrompt()">העתק</button>
               </div>
               <div id="img-prompt" class="img-prompt-text"></div>
             </div>
 
             <div id="img-edit-card" class="img-card">
-              <div class="img-card-title">🖌 Edit Suggestions</div>
+              <div class="img-card-title">🖌 הצעות עריכה</div>
               <div id="img-edits" class="img-card-body"></div>
             </div>
           </div>
@@ -1324,19 +1324,19 @@
           <div class="img-compare-header">
             <span class="img-chat-title">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
-              Compare Images (2–4)
+              השוואת תמונות (2–4)
             </span>
-            <span style="font-size:11px;color:var(--text3)">AI ranks and analyzes differences side-by-side</span>
+            <span style="font-size:11px;color:var(--text3)">AI מדרג ומנתח הבדלים זה לצד זה</span>
           </div>
           <div class="img-compare-drop-row" id="img-compare-drop-row">
             <label class="img-compare-slot" id="cslot-0">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity=".4"><path d="M12 5v14M5 12h14"/></svg>
-              <span>Image 1</span>
+              <span>תמונה 1</span>
               <input type="file" accept="image/*" hidden onchange="addCompareSlot(0,this)"/>
             </label>
             <label class="img-compare-slot" id="cslot-1">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity=".4"><path d="M12 5v14M5 12h14"/></svg>
-              <span>Image 2</span>
+              <span>תמונה 2</span>
               <input type="file" accept="image/*" hidden onchange="addCompareSlot(1,this)"/>
             </label>
             <label class="img-compare-slot" id="cslot-2">
@@ -1351,10 +1351,10 @@
             </label>
           </div>
           <div class="img-compare-actions">
-            <input type="text" id="img-compare-prompt" class="vqa-input" placeholder="What to compare? e.g. 'which photo is better for Instagram'" style="flex:1"/>
+            <input type="text" id="img-compare-prompt" class="vqa-input" placeholder="מה להשוות? לדוגמה: 'איזה צילום טוב יותר לאינסטגרם'" style="flex:1"/>
             <button class="action-btn action-primary" onclick="runImageCompare()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              Compare
+              השווה
             </button>
           </div>
           <div id="img-compare-result" class="img-compare-result hidden"></div>
@@ -1364,11 +1364,11 @@
         <div class="img-chat-wrap">
           <div class="img-chat-title">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            Chat with this Image
+            צ'אט עם התמונה
           </div>
           <div id="img-chat-messages" class="img-chat-messages"></div>
           <div class="img-chat-input-row">
-            <input id="img-chat-input" class="vqa-input" type="text" placeholder="Ask anything about this image…" onkeydown="if(event.key==='Enter')sendImageChat()"/>
+            <input id="img-chat-input" class="vqa-input" type="text" placeholder="שאל כל דבר על התמונה הזו…" onkeydown="if(event.key==='Enter')sendImageChat()"/>
             <button class="vqa-send" onclick="sendImageChat()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>

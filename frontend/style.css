@@ -33,6 +33,7 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.6;overflow:hidden}
+textarea,input,::placeholder{text-align:right}
 
 #app{display:flex;height:100vh}
 
