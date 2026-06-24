@@ -33,7 +33,6 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.6;overflow:hidden}
-textarea,input,::placeholder{text-align:right}
 
 #app{display:flex;height:100vh}
 
@@ -52,8 +51,8 @@ textarea,input,::placeholder{text-align:right}
 .icon-btn-sm{width:28px;height:28px;border-radius:var(--r2);border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .icon-btn-sm:hover{background:var(--bg4);color:var(--text);border-color:var(--accent)}
 
-.mode-switcher{display:flex;background:var(--bg);border:1px solid var(--border);border-radius:var(--r2);padding:3px;gap:2px;margin-bottom:4px}
-.mode-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 4px;border:none;background:transparent;color:var(--text3);font-family:inherit;font-size:12px;font-weight:500;border-radius:5px;cursor:pointer;transition:all .15s}
+.mode-switcher{display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:var(--r2);padding:3px;gap:2px;margin-bottom:4px}
+.mode-btn{display:flex;align-items:center;justify-content:flex-start;gap:7px;padding:7px 8px;border:none;background:transparent;color:var(--text3);font-family:inherit;font-size:12.5px;font-weight:500;border-radius:5px;cursor:pointer;transition:all .15s;width:100%;text-align:right}
 .mode-btn.active{background:var(--bg3);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .mode-btn[data-mode="video"].active{color:#f87171}
 
